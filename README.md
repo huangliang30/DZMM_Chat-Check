@@ -13,8 +13,9 @@
 
 ## 运行
 - 源码：`python chat_viewer.py [chat_export_xxx.json]`（Python 3.10+；可选依赖 tkinterdnd2 支持拖入文件）
-- 打包版：`dist/AI_Chat_Viewer.exe`（重建：`python -m PyInstaller AI_Chat_Viewer.spec --noconfirm`）
-- 最新打包版下载：[Releases 页](https://github.com/huangliang30/Chat-Check/releases)（`AI_Chat_Viewer.exe` 单文件绿色版）
+- 打包版：`dist/AI_Chat_Check.exe`（重建：`python -m PyInstaller AI_Chat_Viewer.spec --noconfirm`）
+- 软件名 AI Chat Check；窗口 / 任务栏 / exe 图标为 `good.ico`（源图 `good.png`）
+- 最新打包版下载：[Releases 页](https://github.com/huangliang30/Chat-Check/releases)（`AI_Chat_Check.exe` 单文件绿色版）
 
 ## 快捷键
 | 快捷键 | 功能 |

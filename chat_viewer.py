@@ -28,8 +28,8 @@ except Exception:
     HAS_DND = False
 
 
-APP_NAME = "AI Chat Viewer"
-APP_TITLE = "AI Chat Viewer · 聊天记录查看器"
+APP_NAME = "AI Chat Check"
+APP_TITLE = "AI Chat Check · 聊天记录查看器"
 PLACEHOLDER = "搜索消息内容…  (Ctrl+F)"
 
 
@@ -607,6 +607,8 @@ class FlatButton(RoundWidget):
         self._enabled = True
         self._hover = False
         self._press = False
+        self._scale = 1.0
+        self._anim_jobs = []
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<ButtonPress-1>", self._on_down)
@@ -648,22 +650,47 @@ class FlatButton(RoundWidget):
 
     def _on_leave(self, _event=None):
         self._hover = False
-        self._press = False
-        self._paint(self._theme.pal)
+        if self._press:
+            self._press = False
+            self._spring_back()
+        else:
+            self._paint(self._theme.pal)
 
     def _on_down(self, _event=None):
-        if self._enabled:
-            self._press = True
-            self._paint(self._theme.pal)
+        if not self._enabled:
+            return
+        self._press = True
+        self._stop_anim()
+        self._set_scale(0.93)
 
     def _on_up(self, event=None):
         if not self._press:
             return
         self._press = False
-        self._paint(self._theme.pal)
         inside = event is None or (0 <= event.x <= self._rw and 0 <= event.y <= self._rh)
+        self._spring_back()
         if self._enabled and inside and self._command:
             self._command()
+
+    # -- 弹性动画 --
+    def _set_scale(self, scale):
+        self._scale = scale
+        self._paint(self._theme.pal)
+
+    def _stop_anim(self):
+        for job in self._anim_jobs:
+            try:
+                self.after_cancel(job)
+            except Exception:
+                pass
+        self._anim_jobs = []
+
+    def _spring_back(self):
+        """松手回弹：缩小 → 过冲放大 → 回稳，制造弹性手感。"""
+        self._stop_anim()
+        for ms, scale in ((0, 0.93), (70, 1.06), (150, 0.985), (220, 1.0)):
+            self._anim_jobs.append(
+                self.after(ms, lambda s=scale: self._set_scale(s)))
 
     # -- 配色 --
     def _states(self, pal):
@@ -693,16 +720,27 @@ class FlatButton(RoundWidget):
     def _paint(self, pal):
         base, hover, press = self._states(pal)
         fill, fg = press if self._press else (hover if (self._hover and self._enabled) else base)
-        outline = None
-        if self._variant == "default" and not self._on and self._enabled:
-            outline = pal["border_strong"]
         fobj = self._font_obj(self._font)
         width = fobj.measure(self._text or "") + 2 * self._padx
-        height = max(S(24), fobj.metrics("linespace") + 2 * self._pady)
+        height = max(S(26), fobj.metrics("linespace") + 2 * self._pady)
         self._resize(width, height)
         self.delete("all")
         super().configure(bg=pal[self._on_key])
-        self._round(fill, outline)
+        if fill:
+            w, h = self._rw, self._rh
+            sc = self._scale
+            iw, ih = w * sc, h * sc
+            x1 = (w - iw) / 2.0
+            y1 = (h - ih) / 2.0
+            x2, y2 = x1 + iw, y1 + ih
+            radius = max(2.0, ih / 2.0)
+            lift = S(1) if self._press else (S(3) if self._hover and self._enabled else S(2))
+            rounded_rect(self, x1 + S(1), y1 + lift, x2 - S(1), y2 + lift, radius,
+                         fill=_darker(fill, 0.3))
+            rounded_rect(self, x1, y1, x2, y2, radius, fill=fill,
+                         outline=_darker(fill, 0.22), width=S(1))
+            rounded_rect(self, x1 + S(2), y1 + S(1.5), x2 - S(2), y1 + ih * 0.52,
+                         max(2.0, radius * 0.6), fill=_lighter(fill, 0.14))
         self.create_text(self._rw / 2.0, self._rh / 2.0, text=self._text or "",
                          font=self._font, fill=fg, anchor="center")
         super().configure(cursor="hand2" if self._enabled else "arrow")
@@ -933,6 +971,27 @@ def rounded_rect(canvas, x1, y1, x2, y2, radius, **kw):
     return canvas.create_polygon(points, smooth=True, **kw)
 
 
+def _hex_mix(color_a, color_b, ratio):
+    """两个 #rrggbb 颜色按 ratio（b 的占比）线性插值。"""
+    try:
+        a = color_a.lstrip("#")
+        b = color_b.lstrip("#")
+        ca = tuple(int(a[i:i + 2], 16) for i in (0, 2, 4))
+        cb = tuple(int(b[i:i + 2], 16) for i in (0, 2, 4))
+        mixed = tuple(int(round(x + (y - x) * ratio)) for x, y in zip(ca, cb))
+        return "#%02x%02x%02x" % mixed
+    except Exception:
+        return color_a
+
+
+def _lighter(color, ratio=0.14):
+    return _hex_mix(color, "#ffffff", ratio)
+
+
+def _darker(color, ratio=0.2):
+    return _hex_mix(color, "#000000", ratio)
+
+
 def ellipsis(text, limit):
     text = (text or "").replace("\r", " ").replace("\n", " ").strip()
     return text if len(text) <= limit else text[:limit - 1] + "\u2026"
@@ -1046,6 +1105,7 @@ class ChatViewerApp:
         # 窗口映射后再设置标题栏属性，否则 DWM 不生效
         self.root.update()
         self._apply_titlebar()
+        self._apply_window_icon()
 
         self.root.mainloop()
 
@@ -1066,7 +1126,7 @@ class ChatViewerApp:
                font=(self.fonts.family, 12)).pack(side="left", pady=S(2))
         stack = TFrame(brand, self.theme, bg_key="surface")
         stack.pack(side="left", padx=(S(6), 0))
-        TLabel(stack, self.theme, text="AI Chat Viewer", bg_key="surface", fg_key="text",
+        TLabel(stack, self.theme, text="AI Chat Check", bg_key="surface", fg_key="text",
                font=self.fonts.ui_bold).pack(anchor="w")
         TLabel(stack, self.theme, text="酒馆聊天记录查看器", bg_key="surface", fg_key="text_3",
                font=self.fonts.tiny).pack(anchor="w")
@@ -2353,6 +2413,18 @@ class ChatViewerApp:
             corner = ctypes.c_int(2)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner))
+        except Exception:
+            pass
+
+    def _apply_window_icon(self):
+        """窗口 / 任务栏图标：优先用打包内嵌的 good.ico。"""
+        try:
+            base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+            ico = os.path.join(base, "good.ico")
+            if not os.path.isfile(ico):
+                return
+            self.root.iconbitmap(default=ico)
+            self.root.iconbitmap(ico)
         except Exception:
             pass
 

@@ -6,6 +6,7 @@ binaries = []
 hiddenimports = ['tkinter', 'tkinterdnd2', 'tkinterdnd2.tkdnd', 'tkinterdnd2.tkdnd_wrapper', 'tkinter.ttk']
 tmp_ret = collect_all('tkinterdnd2')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+datas += [('good.ico', '.')]
 
 
 a = Analysis(
@@ -29,7 +30,8 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='AI_Chat_Viewer',
+    name='AI_Chat_Check',
+    icon='good.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

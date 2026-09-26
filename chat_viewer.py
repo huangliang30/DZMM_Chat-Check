@@ -21,6 +21,14 @@ import tkinter.font as tkfont
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
 try:
+    from PIL import Image as _PILImage
+    from PIL import ImageDraw as _PILDraw
+    from PIL import ImageTk as _PILImageTk
+    HAS_PIL = True
+except Exception:
+    HAS_PIL = False
+
+try:
     from tkinterdnd2 import TkinterDnD
     HAS_DND = True
 except Exception:
@@ -79,6 +87,7 @@ DEFAULT_SETTINGS = {
     "last_dir": "",
     "quote_highlight": True,
     "quote_color": "",
+    "show_toolbar": True,
 }
 
 
@@ -583,10 +592,17 @@ class Chip(RoundWidget):
         fobj = self._font_obj(self._font)
         width = fobj.measure(self._text or "") + 2 * self._padx
         height = fobj.metrics("linespace") + 2 * self._pady + S(2)
-        self._resize(width, height)
         self.delete("all")
         super().configure(bg=pal[self._on_key])
-        self._round(pal[self._bg_key])
+        if HAS_PIL:
+            self._resize(width + 2 * AA_MARGIN, height + 2 * AA_MARGIN)
+            photo = rounded_photo(self, width, height, height / 2.0,
+                                  fill=pal[self._bg_key])
+            self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
+                              anchor="center")
+        else:
+            self._resize(width, height)
+            self._round(pal[self._bg_key])
         self.create_text(self._rw / 2.0, self._rh / 2.0, text=self._text or "",
                          font=self._font, fill=pal[self._fg_key], anchor="center")
 
@@ -723,24 +739,36 @@ class FlatButton(RoundWidget):
         fobj = self._font_obj(self._font)
         width = fobj.measure(self._text or "") + 2 * self._padx
         height = max(S(26), fobj.metrics("linespace") + 2 * self._pady)
-        self._resize(width, height)
         self.delete("all")
         super().configure(bg=pal[self._on_key])
-        if fill:
-            w, h = self._rw, self._rh
-            sc = self._scale
-            iw, ih = w * sc, h * sc
-            x1 = (w - iw) / 2.0
-            y1 = (h - ih) / 2.0
-            x2, y2 = x1 + iw, y1 + ih
-            radius = max(2.0, ih / 2.0)
-            lift = S(1) if self._press else (S(3) if self._hover and self._enabled else S(2))
-            rounded_rect(self, x1 + S(1), y1 + lift, x2 - S(1), y2 + lift, radius,
-                         fill=_darker(fill, 0.3))
-            rounded_rect(self, x1, y1, x2, y2, radius, fill=fill,
-                         outline=_darker(fill, 0.22), width=S(1))
-            rounded_rect(self, x1 + S(2), y1 + S(1.5), x2 - S(2), y1 + ih * 0.52,
-                         max(2.0, radius * 0.6), fill=_lighter(fill, 0.14))
+        if fill and HAS_PIL:
+            self._resize(width + 2 * AA_MARGIN, height + 2 * AA_MARGIN)
+            lift = 1 if self._press else (3 if self._hover and self._enabled else 2)
+            bw, bh = width * self._scale, height * self._scale
+            photo = rounded_photo(self, bw, bh, bh / 2.0, fill=fill,
+                                  outline=_darker(fill, 0.22),
+                                  gloss=_lighter(fill, 0.14),
+                                  shadow=_hex_mix(pal[self._on_key], "#000000", 0.25),
+                                  shadow_lift=lift)
+            self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
+                              anchor="center")
+        else:
+            self._resize(width, height)
+            if fill:
+                w, h = self._rw, self._rh
+                sc = self._scale
+                iw, ih = w * sc, h * sc
+                x1 = (w - iw) / 2.0
+                y1 = (h - ih) / 2.0
+                x2, y2 = x1 + iw, y1 + ih
+                radius = max(2.0, ih / 2.0)
+                lift = S(1) if self._press else (S(3) if self._hover and self._enabled else S(2))
+                rounded_rect(self, x1 + S(1), y1 + lift, x2 - S(1), y2 + lift, radius,
+                             fill=_darker(fill, 0.3))
+                rounded_rect(self, x1, y1, x2, y2, radius, fill=fill,
+                             outline=_darker(fill, 0.22), width=S(1))
+                rounded_rect(self, x1 + S(2), y1 + S(1.5), x2 - S(2), y1 + ih * 0.52,
+                             max(2.0, radius * 0.6), fill=_lighter(fill, 0.14))
         self.create_text(self._rw / 2.0, self._rh / 2.0, text=self._text or "",
                          font=self._font, fill=fg, anchor="center")
         super().configure(cursor="hand2" if self._enabled else "arrow")
@@ -774,13 +802,21 @@ class ColorSwatch(RoundWidget):
 
     def _paint(self, pal):
         size = S(24)
-        self._resize(size, size)
         self.delete("all")
         super().configure(bg=pal[self._on_key])
-        pad = S(5)
-        outline = pal["border_strong"] if self._hover else None
-        self.create_oval(pad, pad, size - pad, size - pad, fill=self._color,
-                         outline=outline or "", width=S(1) if outline else 0)
+        if HAS_PIL:
+            self._resize(size + 2 * AA_MARGIN, size + 2 * AA_MARGIN)
+            d = size - S(4)
+            photo = rounded_photo(self, d, d, d / 2.0, fill=self._color,
+                                  outline=pal["border_strong"] if self._hover else None)
+            self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
+                              anchor="center")
+        else:
+            self._resize(size, size)
+            pad = S(5)
+            outline = pal["border_strong"] if self._hover else None
+            self.create_oval(pad, pad, size - pad, size - pad, fill=self._color,
+                             outline=outline or "", width=S(1) if outline else 0)
         super().configure(cursor="hand2")
 
 
@@ -816,8 +852,9 @@ class SearchBox(RoundWidget):
         inner_w = (smallf.measure("\U0001f50d") + S(5) + uif.measure("0" * width)
                    + smallf.measure("\u2715") + 2 * S(6) + S(12))
         inner_h = uif.metrics("linespace") + 2 * S(4)
-        self._resize(inner_w + 2 * self._inset + 2, inner_h + 4)
-        self.create_window(self._inset + 1, 2, window=self.inner,
+        self._resize(inner_w + 2 * self._inset + 2 * AA_MARGIN,
+                     inner_h + 2 * AA_MARGIN)
+        self.create_window(AA_MARGIN + self._inset, AA_MARGIN, window=self.inner,
                            anchor="nw", width=inner_w, height=inner_h)
 
         self.entry.bind("<FocusIn>", self._focus_in)
@@ -849,8 +886,15 @@ class SearchBox(RoundWidget):
         except Exception:
             focused = False
         outline = pal["accent"] if focused else pal["border_strong"]
-        item = self._round(pal["surface_2"], outline, pill=False)
-        self.addtag_withtag("bg", item)
+        if HAS_PIL:
+            photo = rounded_photo(self, self._rw - 2 * AA_MARGIN,
+                                  self._rh - 2 * AA_MARGIN, S(12),
+                                  fill=pal["surface_2"], outline=outline)
+            item = self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
+                                     anchor="center", tags=("bg",))
+        else:
+            item = self._round(pal["surface_2"], outline, pill=False)
+            self.addtag_withtag("bg", item)
         self.tag_lower(item)
 
     def _paint_ring(self):
@@ -971,6 +1015,52 @@ def rounded_rect(canvas, x1, y1, x2, y2, radius, **kw):
     return canvas.create_polygon(points, smooth=True, **kw)
 
 
+AA_MARGIN = 4
+_ROUND_CACHE = {}
+
+
+def _rgba(hexcolor):
+    h = hexcolor.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
+
+
+def rounded_photo(master, w, h, radius, fill=None, outline=None,
+                  outline_width=1, gloss=None, shadow=None, shadow_lift=2,
+                  supersample=3):
+    """PIL 超采样绘制抗锯齿圆角矩形，按参数缓存 PhotoImage。"""
+    w = int(round(w))
+    h = int(round(h) )
+    radius = int(round(min(radius, h // 2)))
+    ss = max(1, int(supersample))
+    # 键里放 tk 解释器对象本身（强引用），避免解释器销毁后 id 被复用而取到失效图片
+    key = (master.tk, w, h, radius, fill, outline, outline_width,
+           gloss, shadow, shadow_lift, ss)
+    hit = _ROUND_CACHE.get(key)
+    if hit is not None:
+        return hit
+    m = AA_MARGIN * ss
+    img = _PILImage.new("RGBA", (w * ss + 2 * m, h * ss + 2 * m), (0, 0, 0, 0))
+    d = _PILDraw.Draw(img)
+    if shadow:
+        d.rounded_rectangle([m + ss, m + shadow_lift * ss,
+                             m + (w - 1) * ss, m + (h - 1) * ss + shadow_lift * ss],
+                            radius=radius * ss, fill=_rgba(shadow))
+    if fill or outline:
+        d.rounded_rectangle([m, m, m + (w - 1) * ss, m + (h - 1) * ss],
+                            radius=radius * ss,
+                            fill=_rgba(fill) if fill else None,
+                            outline=_rgba(outline) if outline else None,
+                            width=max(1, outline_width * ss))
+    if gloss and fill:
+        d.rounded_rectangle([m + 2 * ss, m + int(1.5 * ss),
+                             m + (w - 2) * ss, m + int(h * 0.52 * ss)],
+                            radius=max(2, int(radius * 0.6 * ss)), fill=_rgba(gloss))
+    img = img.resize((img.width // ss, img.height // ss), _PILImage.LANCZOS)
+    photo = _PILImageTk.PhotoImage(img, master=master)
+    _ROUND_CACHE[key] = photo
+    return photo
+
+
 def _hex_mix(color_a, color_b, ratio):
     """两个 #rrggbb 颜色按 ratio（b 的占比）线性插值。"""
     try:
@@ -1063,6 +1153,10 @@ class ChatViewerApp:
         self._build_infobar()
         self._build_statusbar()
         self._build_body()
+        self.btn_toolbar_show = FlatButton(self.root, self.theme, text="展开",
+                                           variant="ghost", font=self.fonts.small,
+                                           padx=S(9), pady=S(2),
+                                           command=self.toggle_toolbar)
         self.theme.subscribe(self._apply_text_theme)
         self.theme.subscribe(self._apply_side_theme)
         self._apply_font_dependent_styles()
@@ -1075,6 +1169,7 @@ class ChatViewerApp:
         self.root.bind("<Control-e>", lambda e: self.toggle_edit_mode())
         self.root.bind("<Control-f>", lambda e: self.focus_search())
         self.root.bind("<Control-h>", lambda e: self.toggle_quote_highlight())
+        self.root.bind("<Control-t>", lambda e: self.toggle_toolbar())
         self.root.bind("<Control-plus>", lambda e: self.change_font_size(1))
         self.root.bind("<Control-equal>", lambda e: self.change_font_size(1))
         self.root.bind("<Control-minus>", lambda e: self.change_font_size(-1))
@@ -1096,6 +1191,8 @@ class ChatViewerApp:
         self._set_infobar_visible(False)
         self._want_sidebar = bool(self.settings.get("show_sidebar", True))
         self._set_sidebar_visible(False)
+        if not self.settings.get("show_toolbar", True):
+            self._set_toolbar_visible(False)
 
         if filepath and os.path.isfile(filepath):
             self._load_json(filepath)
@@ -1114,6 +1211,7 @@ class ChatViewerApp:
         return TFrame(parent, self.theme, bg_key=bg_key, width=1)
 
     def _build_toolbar(self):
+        self._toolbar_visible = True
         bar = TFrame(self.root, self.theme, bg_key="surface")
         bar.pack(side="top", fill="x")
         self.toolbar = bar
@@ -1157,6 +1255,9 @@ class ChatViewerApp:
         self.btn_export.pack(side="left", padx=S(3), pady=S(9))
 
         # 右侧工具（先 pack 的在最右）
+        self.btn_collapse = FlatButton(bar, self.theme, text="收起", variant="ghost",
+                                       font=self.fonts.ui, command=self.toggle_toolbar)
+        self.btn_collapse.pack(side="right", padx=(S(4), S(2)), pady=S(9))
         self.btn_sidebar = FlatButton(bar, self.theme, text="列表", variant="ghost",
                                       font=self.fonts.ui, command=self.toggle_sidebar)
         self.btn_sidebar.pack(side="right", padx=(S(4), S(12)), pady=S(9))
@@ -1191,6 +1292,7 @@ class ChatViewerApp:
 
         inner = TFrame(bar, self.theme, bg_key="surface")
         inner.pack(side="left", fill="both", expand=True, padx=S(16), pady=S(7))
+        self.infobar_inner = inner
 
         self.filter_seg = Segmented(inner, self.theme, self.fonts, FILTERS,
                                     value="all", command=self._on_filter_change)
@@ -1208,12 +1310,14 @@ class ChatViewerApp:
         self.info_time.pack(side="left")
 
     def _set_infobar_visible(self, visible):
+        self._infobar_visible = bool(visible)
         if visible:
             self.infobar.pack(side="top", fill="x", before=self.body)
             self.infobar_line.pack(side="top", fill="x", before=self.body)
         else:
             self.infobar.pack_forget()
             self.infobar_line.pack_forget()
+        self._place_toolbar_handle()
 
     # ══════════════════════════ 状态栏 ══════════════════════════
     def _build_statusbar(self):
@@ -1303,6 +1407,8 @@ class ChatViewerApp:
             ("Ctrl + F", "搜索内容"),
             ("Ctrl + E", "编辑模式"),
             ("Ctrl + C", "复制选中"),
+            ("Ctrl + H", "引号高亮"),
+            ("Ctrl + T", "操作栏收展"),
         ]
         for row, (key, desc) in enumerate(shortcuts):
             cell = TFrame(tips, self.theme, bg_key="bg")
@@ -2375,6 +2481,41 @@ class ChatViewerApp:
         self._goto_highlight(self.hl_pos - 1)
 
     # ══════════════════════════ 视图控制 ══════════════════════════
+    def toggle_toolbar(self, _event=None):
+        """隐藏 / 展开顶部操作栏（Ctrl+T）。"""
+        self._set_toolbar_visible(not getattr(self, "_toolbar_visible", True))
+        self._set_status("操作栏已%s" % ("隐藏" if not self._toolbar_visible else "显示"))
+
+    def _set_toolbar_visible(self, visible):
+        self._toolbar_visible = bool(visible)
+        if self._toolbar_visible:
+            self.btn_toolbar_show.place_forget()
+            self.btn_toolbar_show.pack_forget()
+            anchor = self.infobar if getattr(self, "_infobar_visible", False) else self.body
+            self.toolbar.pack(side="top", fill="x", before=anchor)
+            self.toolbar_line.pack(side="top", fill="x", before=anchor)
+        else:
+            self.toolbar.pack_forget()
+            self.toolbar_line.pack_forget()
+            self._place_toolbar_handle()
+        self.settings["show_toolbar"] = self._toolbar_visible
+        save_settings(self.settings)
+
+    def _place_toolbar_handle(self):
+        """操作栏隐藏时的「展开」把手：信息栏可见就贴在筛选器左侧，否则悬浮在右上角。"""
+        handle = getattr(self, "btn_toolbar_show", None)
+        if handle is None:
+            return
+        handle.place_forget()
+        handle.pack_forget()
+        if getattr(self, "_toolbar_visible", True):
+            return
+        if getattr(self, "_infobar_visible", False):
+            handle.pack(in_=self.infobar_inner, side="right",
+                        padx=(S(2), S(12)), pady=S(2))
+        else:
+            handle.place(in_=self.root, relx=1.0, x=-S(10), y=S(6), anchor="ne")
+
     def toggle_sidebar(self):
         self._set_sidebar_visible(not self.sidebar.winfo_ismapped())
         save_settings(self.settings)

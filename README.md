@@ -3,13 +3,14 @@
 
 ## 功能
 - 纯 tkinter 轻量界面，浅色 / 深色双主题（自动记忆）
-- 圆润设计：窗口圆角、药丸按钮 / 标签 / 搜索框
+- 圆润设计：窗口圆角、药丸按钮 / 标签 / 搜索框（PIL 超采样抗锯齿渲染，边缘平滑）
 - 消息列表侧栏（单击定位、双击编辑），角色色标（user / char / 系统），日期分隔
 - 搜索高亮（Ctrl+F，Enter / Shift+Enter 跳转匹配），角色筛选（全部 / user / char）
 - 编辑模式：Ctrl+Return 应用修改，Ctrl+S 保存回原 JSON（不会写入内部字段）
 - 引号话语高亮（支持 “”、「」、『』与直引号；仅改字体颜色；工具栏「高亮」开关或 Ctrl+H；旁边色块可改高亮颜色，右键色块恢复默认）
 - 正文一键导出为 TXT（纯文字，不含角色与时间戳）
 - 字号调节 Ctrl+ / Ctrl-
+- 操作栏可收起：工具栏「收起」/ 信息栏「展开」/ Ctrl+T，偏好自动记忆
 
 ## 运行
 - 源码：`python chat_viewer.py [chat_export_xxx.json]`（Python 3.10+；可选依赖 tkinterdnd2 支持拖入文件）
@@ -28,10 +29,11 @@
 | Ctrl+C | 复制选中 / 当前消息 |
 | Ctrl+ / Ctrl- | 字号放大 / 缩小 |
 | Ctrl+Return | 应用修改（编辑面板内） |
+| Ctrl+T | 操作栏收起 / 展开 |
 | Esc | 退出编辑 / 清空搜索 |
 
 ## 设置
-保存在 `%APPDATA%\AI_Chat_Viewer\settings.json`（主题、字号、侧栏、窗口大小、quote_highlight）。
+保存在 `%APPDATA%\AI_Chat_Viewer\settings.json`（主题、字号、侧栏、窗口大小、quote_highlight、quote_color、show_toolbar）。
 
 ## 备注
 - `chat_viewer.py.bak` 为界面重构前的旧版备份。

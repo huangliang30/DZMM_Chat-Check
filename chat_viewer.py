@@ -122,74 +122,76 @@ def save_settings(cfg):
 # ══════════════════════════════════════════════════════════════════════════
 PALETTES = {
     "light": {
-        "bg":            "#f3f4f7",
+        "bg":            "#fafafa",
         "surface":       "#ffffff",
-        "surface_2":     "#f7f8fa",
-        "surface_3":     "#eceef3",
-        "border":        "#e4e7ed",
-        "border_strong": "#d2d8e2",
-        "text":          "#1c1f26",
-        "text_2":        "#59616f",
-        "text_3":        "#9299a7",
-        "accent":        "#4a63e7",
-        "accent_hover":  "#3b53d4",
-        "accent_soft":   "#e8ebfd",
+        "surface_2":     "#f4f4f5",
+        "surface_3":     "#e8e8eb",
+        "border":        "#e4e4e7",
+        "border_strong": "#d4d4d8",
+        "text":          "#18181b",
+        "text_2":        "#52525b",
+        "text_3":        "#a1a1aa",
+        "accent":        "#ec4899",
+        "accent_hover":  "#db2777",
+        "accent_soft":   "#fce7f3",
         "accent_fg":     "#ffffff",
-        "user":          "#4a63e7",
-        "user_soft":     "#e9ecfd",
-        "ai":            "#0e9184",
-        "ai_soft":       "#e0f4f1",
-        "sys":           "#b0761c",
-        "sys_soft":      "#fbf1dd",
-        "other":         "#7c5cd6",
-        "other_soft":    "#f0ebfc",
-        "danger":        "#d9435c",
-        "danger_soft":   "#fdeaee",
-        "ok":            "#1f9254",
-        "ok_soft":       "#e5f5ea",
-        "select":        "#c8d4fb",
-        "hl":            "#ffe08a",
-        "hl_cur":        "#ffb638",
-        "hl_fg":         "#33260a",
-        "flash":         "#fdf1c9",
-        "thumb":         "#ccd2dd",
-        "thumb_hover":   "#b3bccb",
-        "trough":        "#f3f4f7",
+        "user":          "#6366f1",
+        "user_soft":     "#e0e7ff",
+        "ai":            "#db2777",
+        "ai_soft":       "#fce7f3",
+        "sys":           "#d97706",
+        "sys_soft":      "#fef3c7",
+        "other":         "#8b5cf6",
+        "other_soft":    "#ede9fe",
+        "danger":        "#e11d48",
+        "danger_soft":   "#ffe4e6",
+        "ok":            "#16a34a",
+        "ok_soft":       "#dcfce7",
+        "select":        "#fbcfe8",
+        "hl":            "#fde68a",
+        "hl_cur":        "#f59e0b",
+        "hl_fg":         "#422006",
+        "flash":         "#fef3c7",
+        "quote":         "#d97706",
+        "thumb":         "#d4d4d8",
+        "thumb_hover":   "#a1a1aa",
+        "trough":        "#fafafa",
     },
     "dark": {
-        "bg":            "#12141a",
-        "surface":       "#191c23",
-        "surface_2":     "#1e222a",
-        "surface_3":     "#272c36",
-        "border":        "#272c36",
-        "border_strong": "#373e4c",
-        "text":          "#e6e8ee",
-        "text_2":        "#a2a9b7",
-        "text_3":        "#71798a",
-        "accent":        "#7189ff",
-        "accent_hover":  "#8b9eff",
-        "accent_soft":   "#232b4c",
-        "accent_fg":     "#0a0d18",
-        "user":          "#8098ff",
-        "user_soft":     "#20294a",
-        "ai":            "#3fcfa0",
-        "ai_soft":       "#16332c",
-        "sys":           "#e3ab5f",
-        "sys_soft":       "#33291a",
-        "other":         "#b39dff",
-        "other_soft":    "#2a2440",
-        "danger":        "#ff7186",
-        "danger_soft":   "#3a2027",
+        "bg":            "#0e0e10",
+        "surface":       "#161618",
+        "surface_2":     "#1e1e21",
+        "surface_3":     "#29292d",
+        "border":        "#26262a",
+        "border_strong": "#3f3f46",
+        "text":          "#f4f4f5",
+        "text_2":        "#a1a1aa",
+        "text_3":        "#71717a",
+        "accent":        "#ec4899",
+        "accent_hover":  "#f472b6",
+        "accent_soft":   "#3d1428",
+        "accent_fg":     "#ffffff",
+        "user":          "#818cf8",
+        "user_soft":     "#26214a",
+        "ai":            "#f472b6",
+        "ai_soft":       "#3d1428",
+        "sys":           "#fbbf24",
+        "sys_soft":      "#33260a",
+        "other":         "#c084fc",
+        "other_soft":    "#2a1a4a",
+        "danger":        "#fb7185",
+        "danger_soft":   "#4c0519",
         "ok":            "#4ade80",
-        "ok_soft":       "#1b3327",
-        "select":        "#3a4670",
-        "hl":            "#6b5416",
-        "hl_cur":        "#a37c1c",
-        "hl_fg":         "#ffeab0",
-        "flash":         "#3a3419",
-        "thumb":         "#3a4150",
-        "thumb_hover":   "#4c5464",
-        "trough":        "#191c23",
+        "ok_soft":       "#052e16",
+        "select":        "#831843",
+        "hl":            "#713f12",
+        "hl_cur":        "#a16207",
+        "hl_fg":         "#fef08a",
+        "flash":         "#451a03",
+        "quote":         "#f59e0b",
+        "thumb":         "#3f3f46",
+        "thumb_hover":   "#52525b",
+        "trough":        "#161618",
     },
 }
 
@@ -849,7 +851,7 @@ class SearchBox(RoundWidget):
         self.entry.pack(side="left", fill="x", expand=True, pady=S(4))
         self.clear_btn = FlatButton(self.inner, theme, text="\u2715", variant="ghost",
                                     font=fonts.small, padx=S(6), pady=0,
-                                    on_key=self._on_key, command=self.clear)
+                                    on_key="surface_2", command=self.clear)
         self._inset = S(10)
 
         uif = self._font_obj(fonts.ui)
@@ -874,17 +876,16 @@ class SearchBox(RoundWidget):
     # -- 外观 --
     def _paint(self, pal):
         self._pal = pal
-        bg_key = self._on_key
-        super().configure(bg=pal[bg_key])
-        self.inner.configure(bg=pal[bg_key])
-        self.glyph.configure(bg=pal[bg_key], fg=pal["text_3"], font=self._fonts.small)
+        super().configure(bg=pal[self._on_key])
+        self.inner.configure(bg=pal["surface_2"])
+        self.glyph.configure(bg=pal["surface_2"], fg=pal["text_3"], font=self._fonts.small)
         self.entry.configure(
-            bg=pal[bg_key],
+            bg=pal["surface_2"],
             fg=pal["text_3"] if self._placeholder else pal["text"],
             insertbackground=pal["accent"],
             selectbackground=pal["select"],
             selectforeground=pal["text"],
-            readonlybackground=pal[bg_key],
+            readonlybackground=pal["surface_2"],
         )
         self.delete("bg")
         focused = False
@@ -892,24 +893,15 @@ class SearchBox(RoundWidget):
             focused = self.entry.focus_get() is self.entry
         except Exception:
             focused = False
-        # 透明融入背景：空闲无描边，有内容细描边，聚焦主题色描边
-        has_text = bool(self.var.get().strip()) and not self._placeholder
-        if focused:
-            outline = pal["accent"]
-        elif has_text:
-            outline = pal["border"]
-        else:
-            outline = None
-        if outline is None:
-            return
+        outline = pal["accent"] if focused else None
         if HAS_PIL:
             photo = rounded_photo(self, self._rw - 2 * AA_MARGIN,
                                   self._rh - 2 * AA_MARGIN, S(12),
-                                  outline=outline)
+                                  fill=pal["surface_2"], outline=outline)
             item = self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
                                      anchor="center", tags=("bg",))
         else:
-            item = self._round(None, outline, pill=False)
+            item = self._round(pal["surface_2"], outline, pill=False)
             self.addtag_withtag("bg", item)
         self.tag_lower(item)
 
@@ -1623,8 +1615,10 @@ class ChatViewerApp:
         )
         area.tag_configure("gap", font=self.fonts.gap)
         area.tag_configure("body", font=self.fonts.content, foreground=pal["text"],
-                           lmargin1=S(13), lmargin2=S(13), rmargin=S(26),
+                           lmargin1=S(10), lmargin2=S(10), rmargin=S(20),
                            spacing1=S(1), spacing2=S(6), spacing3=S(2), justify="left")
+        area.tag_configure("card", lmargin1=S(10), lmargin2=S(10),
+                           rmargin=S(20), spacing1=S(8), spacing3=S(8))
         area.tag_configure("body_dim", font=self.fonts.content_italic, foreground=pal["text_2"])
         area.tag_configure("ital", font=self.fonts.content_italic, foreground=pal["text_2"])
         for key in ("user", "ai", "sys", "other"):
@@ -1643,6 +1637,9 @@ class ChatViewerApp:
         area.tag_configure("flash", background=pal["flash"])
         area.tag_configure("hl", background=pal["hl"], foreground=pal["hl_fg"])
         area.tag_configure("hl_cur", background=pal["hl_cur"], foreground=pal["hl_fg"])
+        area.tag_raise("card")
+        for _t in ("quote", "hl", "hl_cur", "flash"):
+            area.tag_raise(_t)
 
         self.edit_text.configure(
             bg=pal["surface_2"], fg=pal["text"], insertbackground=pal["accent"],
@@ -1888,6 +1885,8 @@ class ChatViewerApp:
                 area.insert("end", "\n", ("hdr_line",))
 
                 body_tags = ("body",) + (("body_dim",) if (internal or role == "system") else ())
+                if role == "assistant" and not internal:
+                    body_tags = body_tags + ("card",)
                 body_start = area.index("end-1c")
                 if content:
                     area.insert("end", content, body_tags)
@@ -2367,7 +2366,7 @@ class ChatViewerApp:
         color = (self.settings.get("quote_color") or "").strip()
         if re.match(r"^#[0-9a-fA-F]{6}$", color):
             return color
-        return pal["accent"]
+        return pal["quote"]
 
     def set_quote_color(self, value):
         self.settings["quote_color"] = (value or "").strip()

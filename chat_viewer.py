@@ -1231,7 +1231,10 @@ class FolderPanel(TFrame):
     def rescan(self):
         if not self.folder:
             return
+        kept = "" if self.filter_box._placeholder else (self.filter_box.var.get() or "")
         self.set_items(self.folder, scan_chat_folder(self.folder))
+        if kept:
+            self.filter_box.set_text(kept)
         self.app._set_status("已重新扫描：%s" % ellipsis(self.folder, 50))
 
     # -- 列表 --
@@ -1545,6 +1548,10 @@ class ChatViewerApp:
         self.info_title = TLabel(inner, self.theme, text="未打开文件", bg_key="surface",
                                  fg_key="text", font=self.fonts.title, anchor="w")
         self.info_title.pack(side="left")
+        self.btn_back_folder = FlatButton(inner, self.theme, text="‹ 返回文件夹",
+                                          variant="ghost", font=self.fonts.small,
+                                          padx=S(10), pady=S(2),
+                                          command=self._back_to_folder)
 
         self.info_model = Chip(inner, self.theme, text="", bg_key="surface_3",
                                fg_key="text_2", font=self.fonts.small)
@@ -1955,6 +1962,20 @@ class ChatViewerApp:
         self.folder_panel.set_items(folder, items)
         self._enter_folder_mode()
 
+    def _back_to_folder(self):
+        if not self.folder_panel.folder:
+            return
+        self.folder_panel.rescan()
+        self._enter_folder_mode()
+
+    def _update_back_folder(self):
+        show = bool(self.folder_panel.folder) and not self._folder_mode
+        if show and not self.btn_back_folder.winfo_ismapped():
+            self.btn_back_folder.pack(side="left", padx=(0, S(10)),
+                                      before=self.info_title)
+        elif not show and self.btn_back_folder.winfo_ismapped():
+            self.btn_back_folder.pack_forget()
+
     def _enter_folder_mode(self):
         self._folder_mode = True
         self.chat_frame.pack_forget()
@@ -1964,7 +1985,15 @@ class ChatViewerApp:
         self.sidebar_line.pack_forget()
         self._set_infobar_visible(False)
         self.btn_folder.set_on(True)
+        if self.current_file:
+            target = os.path.abspath(self.current_file)
+            for i, it in enumerate(self.folder_panel.filtered):
+                if os.path.abspath(it[2]) == target:
+                    self.folder_panel.selected = i
+                    break
+        self.folder_panel._sync_selection()
         self.folder_panel.filter_box.entry.focus_set()
+        self._update_back_folder()
         self._set_status("文件夹 %s · %d 个聊天文件"
                          % (ellipsis(os.path.basename(self.folder_panel.folder) or self.folder_panel.folder, 40),
                             len(self.folder_panel.filtered)))
@@ -1983,6 +2012,7 @@ class ChatViewerApp:
                 self.sidebar_line.pack(side="left", fill="y", before=self.stage)
         else:
             self._show_empty_state()
+        self._update_back_folder()
 
     def _on_drop(self, event):
         data = event.data or ""
@@ -2031,6 +2061,7 @@ class ChatViewerApp:
         name = display_title(chat_data, filepath)
         self.root.title("%s · %s" % (ellipsis(name, 40), APP_NAME))
         self._update_infobar()
+        self._update_back_folder()
         self._clear_edit_panel()
         self.refresh_display()
         self._set_sidebar_visible(self._want_sidebar)

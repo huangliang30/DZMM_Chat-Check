@@ -1,0 +1,1052 @@
+#!/usr/bin/env python3
+"""
+AI Chat Export Viewer - 酒馆聊天记录查看器
+Drag-and-drop JSON chat exports to view, copy, and edit messages.
+支持拖入酒馆导出的JSON文件，查看、复制和编辑聊天内容。
+"""
+import sys
+import json
+import os
+from datetime import datetime, timezone
+from tkinter import (
+    Tk, Frame, Label, Button, Text, Scrollbar, Menu,
+    messagebox, filedialog,
+    TOP, BOTTOM, LEFT, RIGHT, X, Y, BOTH,
+    NORMAL, DISABLED, END, WORD, INSERT, SEL, SEL_FIRST, SEL_LAST,
+    SUNKEN, RAISED, FLAT, VERTICAL,
+    StringVar, BooleanVar,
+)
+from tkinter import ttk
+
+# ── Try to import tkinterdnd2 for drag-and-drop ──
+try:
+    from tkinterdnd2 import TkinterDnD
+    HAS_DND = True
+except ImportError:
+    TkinterDnD = None
+    HAS_DND = False
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COLORS & STYLE
+# ══════════════════════════════════════════════════════════════════════════════
+BG_MAIN = "#f4f6fb"         # main background - soft light blue-gray
+BG_PANEL = "#e8ebf4"        # toolbar / sidebar panels
+BG_FIELD = "#ffffff"        # buttons & input fields
+TEXT_PRIMARY = "#2a2e3d"    # dark slate
+TEXT_SECONDARY = "#6d7280"
+ACCENT_USER = "#3d6fd1"     # blue tint for user
+ACCENT_AI = "#4e9a5f"       # green tint for assistant
+ACCENT_SYSTEM = "#c07a20"   # orange/gold for system
+ACCENT_WARN = "#d6455d"     # red/pink
+BORDER = "#c8cede"
+HIGHLIGHT = "#d9deea"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CHAT PARSER
+# ══════════════════════════════════════════════════════════════════════════════
+def parse_timestamp(ts_ms):
+    """Convert Unix timestamp (ms) to readable string."""
+    try:
+        if ts_ms > 1e15:  # microseconds
+            ts_ms = ts_ms / 1000
+        dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, OSError):
+        return str(ts_ms)
+
+def get_role_label(role):
+    """Return a friendly label for each role."""
+    labels = {
+        "user": "🧑 用户 (User)",
+        "assistant": "🤖 助手 (Assistant)",
+        "system": "⚙️ 系统 (System)",
+    }
+    return labels.get(role, f"📋 {role}")
+
+def get_role_color(role):
+    """Return the display color for each role."""
+    colors = {
+        "user": ACCENT_USER,
+        "assistant": ACCENT_AI,
+        "system": ACCENT_SYSTEM,
+    }
+    return colors.get(role, ACCENT_WARN)
+
+def traverse_chunks(chunks):
+    """
+    Traverse the chunk tree, following active children, and return
+    a flat list of (chunk_id, messages) in traversal order.
+    """
+    if not chunks:
+        return []
+
+    # Build lookup
+    chunk_map = {}
+    for c in chunks:
+        chunk_map[c["id"]] = c
+
+    # Find root: chunk with no parent OR parent not in chunk_map
+    root = None
+    for c in chunks:
+        parent = c.get("parent")
+        if parent is None or parent not in chunk_map:
+            root = c
+            break
+    if root is None:
+        root = chunks[0]
+
+    visited = set()
+    result = []
+
+    def dfs(chunk):
+        if chunk["id"] in visited:
+            return
+        visited.add(chunk["id"])
+        result.append((chunk["id"], chunk.get("messages", [])))
+        # Follow active children
+        for child_id in chunk.get("children", []):
+            child = chunk_map.get(child_id)
+            if child and child.get("active", False):
+                dfs(child)
+
+    dfs(root)
+    return result
+
+def extract_messages(json_data):
+    """
+    Extract all messages from a SillyTavern chat export JSON.
+    Returns a dict with metadata and message list.
+    """
+    chat_meta = json_data.get("chat", {})
+    title = chat_meta.get("title", "未命名会话")
+    model = chat_meta.get("model", "未知模型")
+    total_msgs = chat_meta.get("total_message", 0)
+    exported_at = json_data.get("exported_at", "")
+
+    chunks = chat_meta.get("chunks")
+    # Top-level message blocks keyed by chunk_id
+    msg_blocks = json_data.get("messages", [])
+    all_messages = []
+
+    if chunks:
+        # Build a map from chunk_id to its messages
+        chunk_msgs_map = {}
+        for block in msg_blocks:
+            cid = block.get("chunk_id", "")
+            chunk_msgs_map[cid] = block.get("messages", [])
+
+        # Traverse the chunk tree to get ordered chunks
+        chunk_sequence = traverse_chunks(chunks)
+        seen_msg_ids = set()
+
+        for chunk_id, _chunk_inline_msgs in chunk_sequence:
+            msgs = chunk_msgs_map.get(chunk_id, _chunk_inline_msgs)
+            for msg in msgs:
+                # Deduplicate by createAt+role as a simple key
+                dedup_key = f"{msg.get('createAt','')}_{msg.get('role','')}_{msg.get('content','')[:20]}"
+                if dedup_key not in seen_msg_ids:
+                    seen_msg_ids.add(dedup_key)
+                    msg["_chunk_id"] = chunk_id
+                    all_messages.append(msg)
+    else:
+        # Flat messages list
+        for block in msg_blocks:
+            for msg in block.get("messages", []):
+                all_messages.append(msg)
+
+    # Add index for reference
+    for i, msg in enumerate(all_messages):
+        msg["_index"] = i
+
+    return {
+        "title": title,
+        "model": model,
+        "total_messages": total_msgs,
+        "exported_at": exported_at,
+        "messages": all_messages,
+        "raw": json_data,
+    }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN APPLICATION
+# ══════════════════════════════════════════════════════════════════════════════
+class ChatViewerApp:
+    def __init__(self, filepath=None):
+        # Use DnD-enabled Tk if available
+        if HAS_DND:
+            self.root = TkinterDnD.Tk()
+        else:
+            self.root = Tk()
+
+        self.root.title("AI Chat Viewer - 聊天记录查看器")
+        self.root.geometry("1100x750")
+        self.root.minsize(700, 500)
+        self.root.configure(bg=BG_MAIN)
+
+        # ── State ──
+        self.current_file = None
+        self.chat_data = None       # parsed chat data
+        self.messages = []          # flat message list
+        self.edited = {}            # index -> edited content
+        self.edit_mode = BooleanVar(value=False)
+        self.filter_role = StringVar(value="全部 (All)")
+
+        # ── Build UI ──
+        self._build_toolbar()
+        self._build_main_area()
+        self._build_statusbar()
+
+        # ── Bind events ──
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.bind("<Control-o>", lambda e: self.open_file())
+        self.root.bind("<Control-s>", lambda e: self.save_file())
+        self.root.bind("<Control-c>", lambda e: self.copy_selected())
+        self.root.bind("<Control-e>", lambda e: self.toggle_edit_mode())
+        self.root.bind("<Control-f>", lambda e: self.focus_search())
+
+        # ── Drag & drop setup ──
+        if HAS_DND:
+            self.root.drop_target_register("DND_Files")
+            self.root.dnd_bind("<<Drop>>", self._on_drop)
+        else:
+            # Fallback: use tkinter's built-in drop mechanism via Windows messages
+            self._setup_windows_drop()
+
+        # ── Load file if provided ──
+        if filepath and os.path.isfile(filepath):
+            self._load_json(filepath)
+        else:
+            self._show_welcome()
+
+        self.root.mainloop()
+
+    # ── UI Builders ──────────────────────────────────────────────────────
+
+    def _build_toolbar(self):
+        """Top toolbar with action buttons."""
+        toolbar = Frame(self.root, bg=BG_PANEL, height=48, relief=FLAT)
+        toolbar.pack(side=TOP, fill=X)
+        toolbar.pack_propagate(False)
+
+        btn_style = {
+            "bg": BG_FIELD, "fg": TEXT_PRIMARY, "relief": FLAT,
+            "font": ("Microsoft YaHei UI", 10), "padx": 14, "pady": 6,
+            "cursor": "hand2", "activebackground": HIGHLIGHT,
+            "activeforeground": "#ffffff",
+        }
+
+        # Open button
+        self.btn_open = Button(toolbar, text="📂 打开 (Open)", command=self.open_file, **btn_style)
+        self.btn_open.pack(side=LEFT, padx=(12, 4), pady=8)
+
+        # Separator
+        Frame(toolbar, bg=BORDER, width=1).pack(side=LEFT, fill=Y, padx=6, pady=8)
+
+        # Copy button
+        self.btn_copy = Button(toolbar, text="📋 复制选中 (Copy)", command=self.copy_selected, **btn_style)
+        self.btn_copy.pack(side=LEFT, padx=4, pady=8)
+
+        # Edit mode toggle
+        self.btn_edit = Button(toolbar, text="✏️ 编辑模式 (Edit)", command=self.toggle_edit_mode, **btn_style)
+        self.btn_edit.pack(side=LEFT, padx=4, pady=8)
+
+        # Save button
+        self.btn_save = Button(toolbar, text="💾 保存 (Save)", command=self.save_file, **btn_style)
+        self.btn_save.pack(side=LEFT, padx=4, pady=8)
+
+        # Separator
+        Frame(toolbar, bg=BORDER, width=1).pack(side=LEFT, fill=Y, padx=6, pady=8)
+
+        # Role filter
+        Label(toolbar, text="筛选:", bg=BG_PANEL, fg=TEXT_SECONDARY,
+              font=("Microsoft YaHei UI", 9)).pack(side=LEFT, padx=(4, 2))
+
+        self.cmb_filter = ttk.Combobox(
+            toolbar, textvariable=self.filter_role, width=14,
+            values=["全部 (All)", "🧑 用户 (User)", "🤖 助手 (Assistant)", "⚙️ 系统 (System)"],
+            state="readonly", font=("Microsoft YaHei UI", 9),
+        )
+        self.cmb_filter.pack(side=LEFT, padx=2)
+        self.cmb_filter.bind("<<ComboboxSelected>>", lambda e: self.refresh_display())
+
+        # Search box
+        Label(toolbar, text="搜索:", bg=BG_PANEL, fg=TEXT_SECONDARY,
+              font=("Microsoft YaHei UI", 9)).pack(side=LEFT, padx=(12, 2))
+
+        self.search_var = StringVar()
+        self.search_entry = ttk.Entry(
+            toolbar, textvariable=self.search_var, width=18,
+            font=("Microsoft YaHei UI", 9),
+        )
+        self.search_entry.pack(side=LEFT, padx=2)
+        self.search_entry.bind("<Return>", lambda e: self.search_next())
+        self.search_entry.bind("<KeyRelease>", lambda e: self._on_search_key(e))
+
+        Button(toolbar, text="🔍 查找", command=self.search_next,
+               bg=BG_FIELD, fg=TEXT_PRIMARY, relief=FLAT,
+               font=("Microsoft YaHei UI", 9), padx=8, pady=3,
+               cursor="hand2", activebackground=HIGHLIGHT,
+               activeforeground="#1a1e2a").pack(side=LEFT, padx=4, pady=8)
+
+        # Right side: file info
+        self.lbl_file = Label(toolbar, text="未打开文件", bg=BG_PANEL, fg=TEXT_SECONDARY,
+                              font=("Microsoft YaHei UI", 9))
+        self.lbl_file.pack(side=RIGHT, padx=12)
+
+    def _build_main_area(self):
+        """Main content area with message list and edit panel."""
+        main_frame = Frame(self.root, bg=BG_MAIN)
+        main_frame.pack(side=TOP, fill=BOTH, expand=True)
+
+        # ── Message display (Text widget with scrollbar) ──
+        text_frame = Frame(main_frame, bg=BG_MAIN)
+        text_frame.pack(side=LEFT, fill=BOTH, expand=True)
+
+        self.text_area = Text(
+            text_frame,
+            bg=BG_MAIN, fg=TEXT_PRIMARY,
+            font=("Microsoft YaHei UI", 11),
+            wrap=WORD, relief=FLAT,
+            borderwidth=0, padx=20, pady=12,
+            spacing1=4, spacing2=2, spacing3=4,
+            insertbackground=TEXT_PRIMARY,
+            selectbackground="#4a6a9b",
+            selectforeground="#ffffff",
+            undo=True,
+        )
+        self.text_area.pack(side=LEFT, fill=BOTH, expand=True)
+
+        # Scrollbar
+        sb = Scrollbar(text_frame, orient=VERTICAL, command=self.text_area.yview)
+        sb.pack(side=RIGHT, fill=Y)
+        self.text_area.configure(yscrollcommand=sb.set)
+
+        # Configure tags for message styling
+        self.text_area.tag_configure("header_user", foreground=ACCENT_USER,
+                                     font=("Microsoft YaHei UI", 11, "bold"),
+                                     spacing1=16, spacing3=2)
+        self.text_area.tag_configure("header_ai", foreground=ACCENT_AI,
+                                     font=("Microsoft YaHei UI", 11, "bold"),
+                                     spacing1=16, spacing3=2)
+        self.text_area.tag_configure("header_sys", foreground=ACCENT_SYSTEM,
+                                     font=("Microsoft YaHei UI", 11, "bold"),
+                                     spacing1=16, spacing3=2)
+        self.text_area.tag_configure("meta", foreground=TEXT_SECONDARY,
+                                     font=("Microsoft YaHei UI", 8))
+        self.text_area.tag_configure("content_user", foreground="#333f66",
+                                     font=("Microsoft YaHei UI", 11),
+                                     lmargin1=16, lmargin2=16, rmargin=16,
+                                     spacing1=2, spacing2=4, spacing3=10)
+        self.text_area.tag_configure("content_ai", foreground="#31563b",
+                                     font=("Microsoft YaHei UI", 11),
+                                     lmargin1=16, lmargin2=16, rmargin=16,
+                                     spacing1=2, spacing2=4, spacing3=10)
+        self.text_area.tag_configure("content_sys", foreground="#6d4a1e",
+                                     font=("Microsoft YaHei UI", 11),
+                                     lmargin1=16, lmargin2=16, rmargin=16,
+                                     spacing1=2, spacing2=4, spacing3=10)
+        self.text_area.tag_configure("separator", foreground=BORDER,
+                                     font=("Consolas", 8),
+                                     spacing1=4, spacing3=4)
+        self.text_area.tag_configure("highlight", background="#ffe9a0")
+        self.text_area.tag_configure("msg_index", foreground=TEXT_SECONDARY,
+                                     font=("Microsoft YaHei UI", 7))
+
+        # Right-click context menu
+        self._build_context_menu()
+
+        # Status label for hover
+        self.text_area.bind("<Motion>", self._on_text_motion)
+
+        # ── Edit panel (initially hidden) ──
+        self.edit_frame = Frame(main_frame, bg=BG_PANEL, width=340)
+        self._build_edit_panel()
+
+        # ── Message list sidebar ──
+        self.sidebar_frame = Frame(main_frame, bg=BG_PANEL, width=260)
+        self._build_sidebar()
+
+    def _build_edit_panel(self):
+        """Right-side edit panel."""
+        edit_inner = Frame(self.edit_frame, bg=BG_PANEL, padx=10, pady=10)
+
+        Label(edit_inner, text="✏️ 消息编辑", bg=BG_PANEL, fg=ACCENT_WARN,
+              font=("Microsoft YaHei UI", 13, "bold")).pack(anchor="w")
+
+        self.lbl_editing = Label(edit_inner, text="双击消息或点击列表来编辑",
+                                 bg=BG_PANEL, fg=TEXT_SECONDARY,
+                                 font=("Microsoft YaHei UI", 9), wraplength=300)
+        self.lbl_editing.pack(anchor="w", pady=(6, 4))
+
+        Label(edit_inner, text="角色:", bg=BG_PANEL, fg=TEXT_SECONDARY,
+              font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(8, 0))
+        self.edit_role_var = StringVar(value="")
+        Label(edit_inner, textvariable=self.edit_role_var, bg=BG_FIELD, fg=TEXT_PRIMARY,
+              font=("Microsoft YaHei UI", 10, "bold"), padx=10, pady=4,
+              anchor="w", relief=SUNKEN).pack(fill=X)
+
+        Label(edit_inner, text="时间:", bg=BG_PANEL, fg=TEXT_SECONDARY,
+              font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(6, 0))
+        self.edit_time_var = StringVar(value="")
+        Label(edit_inner, textvariable=self.edit_time_var, bg=BG_FIELD, fg=TEXT_SECONDARY,
+              font=("Microsoft YaHei UI", 9), padx=10, pady=3,
+              anchor="w", relief=SUNKEN).pack(fill=X)
+
+        Label(edit_inner, text="内容:", bg=BG_PANEL, fg=TEXT_SECONDARY,
+              font=("Microsoft YaHei UI", 9)).pack(anchor="w", pady=(6, 0))
+
+        self.edit_text = Text(
+            edit_inner, height=16, bg=BG_FIELD, fg=TEXT_PRIMARY,
+            font=("Microsoft YaHei UI", 10), wrap=WORD,
+            insertbackground=TEXT_PRIMARY, relief=SUNKEN,
+            padx=8, pady=8, undo=True,
+        )
+        self.edit_text.pack(fill=BOTH, expand=True, pady=(2, 6))
+
+        btn_frame = Frame(edit_inner, bg=BG_PANEL)
+        btn_frame.pack(fill=X, pady=(4, 0))
+
+        self.edit_msg_index = None
+
+        Button(btn_frame, text="✅ 应用修改", command=self._apply_edit,
+               bg="#4a9b5e", fg="#ffffff", font=("Microsoft YaHei UI", 10),
+               relief=FLAT, padx=10, pady=5, cursor="hand2",
+               activebackground="#3d824e").pack(side=LEFT, padx=(0, 6))
+
+        Button(btn_frame, text="🔄 还原", command=self._revert_edit,
+               bg=BG_FIELD, fg=TEXT_PRIMARY, font=("Microsoft YaHei UI", 10),
+               relief=FLAT, padx=10, pady=5, cursor="hand2",
+               activebackground=HIGHLIGHT).pack(side=LEFT, padx=(0, 6))
+
+        Button(btn_frame, text="❌ 取消", command=self._cancel_edit,
+               bg=BG_FIELD, fg=ACCENT_WARN, font=("Microsoft YaHei UI", 10),
+               relief=FLAT, padx=10, pady=5, cursor="hand2",
+               activebackground=HIGHLIGHT).pack(side=LEFT)
+
+        edit_inner.pack(fill=BOTH, expand=True)
+
+    def _build_sidebar(self):
+        """Left sidebar with message list."""
+        sidebar_inner = Frame(self.sidebar_frame, bg=BG_PANEL, padx=8, pady=10)
+
+        Label(sidebar_inner, text="📋 消息列表", bg=BG_PANEL, fg=TEXT_PRIMARY,
+              font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
+
+        # Treeview for message list
+        tree_frame = Frame(sidebar_inner, bg=BG_PANEL)
+        tree_frame.pack(fill=BOTH, expand=True, pady=(6, 0))
+
+        columns = ("role", "preview")
+        self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings",
+                                 selectmode="browse")
+        self.tree.heading("role", text="角色", anchor="w")
+        self.tree.heading("preview", text="内容预览", anchor="w")
+        self.tree.column("role", width=50, minwidth=40, stretch=False)
+        self.tree.column("preview", width=190, minwidth=100)
+
+        # Style the tree
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Treeview",
+                        background=BG_FIELD, foreground=TEXT_PRIMARY,
+                        fieldbackground=BG_FIELD, borderwidth=0,
+                        font=("Microsoft YaHei UI", 9), rowheight=28)
+        style.configure("Treeview.Heading",
+                        background=BG_PANEL, foreground=TEXT_PRIMARY,
+                        font=("Microsoft YaHei UI", 9, "bold"), borderwidth=0)
+        style.map("Treeview",
+                  background=[("selected", "#4a6a9b")],
+                  foreground=[("selected", "#ffffff")])
+
+        tree_scroll = Scrollbar(tree_frame, orient=VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_scroll.set)
+
+        self.tree.pack(side=LEFT, fill=BOTH, expand=True)
+        tree_scroll.pack(side=RIGHT, fill=Y)
+
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self.tree.bind("<Double-1>", self._on_tree_double_click)
+
+        # Message count
+        self.lbl_msg_count = Label(sidebar_inner, text="共 0 条消息",
+                                   bg=BG_PANEL, fg=TEXT_SECONDARY,
+                                   font=("Microsoft YaHei UI", 9))
+        self.lbl_msg_count.pack(anchor="e", pady=(6, 0))
+
+        sidebar_inner.pack(fill=BOTH, expand=True)
+
+    def _build_context_menu(self):
+        """Right-click context menu."""
+        self.ctx_menu = Menu(self.text_area, tearoff=0,
+                             bg=BG_FIELD, fg=TEXT_PRIMARY,
+                             activebackground=HIGHLIGHT,
+                             activeforeground="#1a1e2a",
+                             font=("Microsoft YaHei UI", 10))
+        self.ctx_menu.add_command(label="📋 复制选中 (Copy)", command=self.copy_selected)
+        self.ctx_menu.add_command(label="📋 复制全部 (Copy All)", command=self.copy_all)
+        self.ctx_menu.add_separator()
+        self.ctx_menu.add_command(label="✏️ 编辑此消息 (Edit)", command=self._edit_selected_message)
+        self.ctx_menu.add_separator()
+        self.ctx_menu.add_command(label="🔍 搜索... (Search)", command=self.focus_search)
+
+        self.text_area.bind("<Button-3>", self._show_context_menu)
+        # Also on macOS right-click
+        self.text_area.bind("<Button-2>", self._show_context_menu)
+
+    def _build_statusbar(self):
+        """Bottom status bar."""
+        status = Frame(self.root, bg=BG_PANEL, height=28, relief=FLAT)
+        status.pack(side=BOTTOM, fill=X)
+        status.pack_propagate(False)
+
+        self.lbl_status = Label(status, text="拖入JSON文件或点击「打开」开始 | Drag JSON here or click Open",
+                                bg=BG_PANEL, fg=TEXT_SECONDARY,
+                                font=("Microsoft YaHei UI", 8), anchor="w")
+        self.lbl_status.pack(side=LEFT, padx=12, fill=X, expand=True)
+
+        self.lbl_info = Label(status, text="", bg=BG_PANEL, fg=TEXT_SECONDARY,
+                              font=("Microsoft YaHei UI", 8))
+        self.lbl_info.pack(side=RIGHT, padx=12)
+
+    # ── Windows legacy drag-drop (fallback) ─────────────────────────────
+
+    def _setup_windows_drop(self):
+        """Setup Windows-specific drag-drop using WM_DROPFILES when tkinterdnd2 unavailable."""
+        if HAS_DND:
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            import ctypes.wintypes
+
+            self._drop_callback_registered = True
+            self.root.after(100, self._register_windows_drop)
+        except Exception:
+            self._drop_callback_registered = False
+
+    def _register_windows_drop(self):
+        """Register for Windows drag-drop messages."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            hwnd = self.root.winfo_id()
+            # Register the window to accept drag-and-drop files
+            ctypes.windll.shell32.DragAcceptFiles(hwnd, True)
+
+            # Define WM_DROPFILES handler
+            WM_DROPFILES = 0x0233
+
+            # We need to hook into the window procedure
+            # This is complex; use Tk's built-in send method as a workaround
+            def check_drop():
+                try:
+                    # Check via Windows API if files were dropped
+                    result = ctypes.windll.shell32.DragQueryFileW(
+                        0, 0xFFFFFFFF, None, 0
+                    )
+                except Exception:
+                    result = 0
+                self.root.after(500, check_drop)
+
+            self.root.after(1000, check_drop)
+        except Exception:
+            pass
+
+    # ── File Operations ──────────────────────────────────────────────────
+
+    def open_file(self):
+        """Open a JSON file via dialog."""
+        filepath = filedialog.askopenfilename(
+            title="打开聊天记录 JSON",
+            filetypes=[
+                ("JSON files", "*.json"),
+                ("All files", "*.*"),
+            ],
+        )
+        if filepath and os.path.isfile(filepath):
+            self._load_json(filepath)
+
+    def _on_drop(self, event):
+        """Handle drag-and-drop of files."""
+        data = event.data
+        if data:
+            # tkinterdnd2 format on Windows: "{C:/path/file.json}" or "{path1} {path2}"
+            # Strip outer braces and split
+            if data.startswith("{") and data.endswith("}"):
+                data = data[1:-1]
+            # May have multiple files separated by "} {"
+            parts = data.replace("} {", "\n").replace("}{", "\n").split()
+            for part in parts:
+                filepath = part.strip("{}").strip()
+                if os.path.isfile(filepath) and filepath.lower().endswith(".json"):
+                    self._load_json(filepath)
+                    return
+            messagebox.showwarning("格式错误", "请拖入 JSON 格式的聊天导出文件。")
+
+    def _load_json(self, filepath):
+        """Parse and display a JSON chat export."""
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            messagebox.showerror("JSON 解析错误", f"无法解析 JSON 文件：\n{e}")
+            return
+        except Exception as e:
+            messagebox.showerror("读取错误", f"无法读取文件：\n{e}")
+            return
+
+        try:
+            self.chat_data = extract_messages(data)
+        except Exception as e:
+            messagebox.showerror("数据格式错误",
+                                 f"无法识别聊天数据格式。\n请确认是酒馆(SillyTavern)导出的JSON。\n\n错误：{e}")
+            return
+
+        self.messages = self.chat_data["messages"]
+        self.edited = {}
+        self.current_file = filepath
+        self.edit_msg_index = None
+
+        # Update UI
+        filename = os.path.basename(filepath)
+        title = self.chat_data["title"]
+        self.root.title(f"{title} - AI Chat Viewer")
+        self.lbl_file.config(text=f"📄 {filename}")
+        self.lbl_status.config(text=f"已加载: {len(self.messages)} 条消息 | 模型: {self.chat_data['model']}")
+
+        self.refresh_display()
+        self._update_sidebar()
+
+        # Show sidebar by default when a file is loaded (edit panel on demand)
+        if not self.sidebar_frame.winfo_ismapped():
+            self.sidebar_frame.pack(side=RIGHT, fill=Y)
+
+    def save_file(self):
+        """Save edited content back to JSON."""
+        if not self.current_file or not self.chat_data:
+            messagebox.showinfo("提示", "请先打开一个聊天文件。")
+            return
+
+        if not self.edited:
+            messagebox.showinfo("提示", "没有修改内容需要保存。")
+            return
+
+        if not messagebox.askyesno("确认保存",
+                                   f"有 {len(self.edited)} 条消息已修改。\n\n将覆盖保存到：\n{self.current_file}\n\n确认保存？"):
+            return
+
+        try:
+            # Apply edits back to the raw data
+            raw = self.chat_data["raw"]
+            edit_count = len(self.edited)
+
+            for idx, new_content in self.edited.items():
+                if idx < len(self.messages):
+                    self.messages[idx]["content"] = new_content
+
+            # Write back to the raw JSON structure
+            for idx, new_content in self.edited.items():
+                if idx < len(self.messages):
+                    msg = self.messages[idx]
+                    chunk_id = msg.get("_chunk_id")
+                    # Update in top-level message blocks
+                    for block in raw.get("messages", []):
+                        if chunk_id and block.get("chunk_id") != chunk_id:
+                            continue
+                        for m in block.get("messages", []):
+                            if (m.get("createAt") == msg.get("createAt") and
+                                    m.get("role") == msg.get("role")):
+                                m["content"] = new_content
+
+            # Write
+            with open(self.current_file, "w", encoding="utf-8") as f:
+                json.dump(raw, f, ensure_ascii=False)
+
+            self.edited = {}
+            messagebox.showinfo("保存成功", f"已保存 {edit_count} 条修改。\n文件：{self.current_file}")
+            self.lbl_status.config(text=f"已保存 - {os.path.basename(self.current_file)}")
+        except Exception as e:
+            messagebox.showerror("保存失败", f"保存时发生错误：\n{e}")
+
+    # ── Display ──────────────────────────────────────────────────────────
+
+    def refresh_display(self):
+        """Refresh the message display area."""
+        self.text_area.configure(state=NORMAL)
+        self.text_area.delete("1.0", END)
+
+        if not self.messages:
+            self._show_welcome()
+            return
+
+        role_filter = self.filter_role.get()
+        search_text = self.search_var.get().strip().lower()
+
+        line_count = 0
+        for msg in self.messages:
+            role = msg.get("role", "unknown")
+            content = self.edited.get(msg["_index"], msg.get("content", ""))
+            timestamp = parse_timestamp(msg.get("createAt", 0))
+            is_internal = msg.get("isInternalMessage", False)
+            msg_index = msg["_index"]
+
+            # Apply filter
+            if "用户" in role_filter and role != "user":
+                continue
+            if "助手" in role_filter and role != "assistant":
+                continue
+            if "系统" in role_filter and role != "system":
+                continue
+
+            # Apply search
+            if search_text and search_text not in content.lower():
+                continue
+
+            line_count += 1
+
+            # Role header
+            role_label = get_role_label(role)
+            tag_header = f"header_{role}" if role in ("user", "assistant", "system") else "header_sys"
+            tag_content = f"content_{role}" if role in ("user", "assistant", "system") else "content_sys"
+
+            if is_internal:
+                role_label += " 🔒"
+
+            # Insert header: "━━━ Role ━━━  timestamp  #N"
+            header_text = f"━━━ {role_label} ━━━  {timestamp}  #{msg_index + 1}"
+            self.text_area.insert(END, header_text + "\n", tag_header)
+
+            # Insert content
+            self.text_area.insert(END, content + "\n", tag_content)
+
+            # Insert separator
+            self.text_area.insert(END, "─" * 60 + "\n", "separator")
+
+        self.text_area.configure(state=DISABLED)
+        self.lbl_info.config(text=f"显示 {line_count}/{len(self.messages)} 条消息")
+
+    def _show_welcome(self):
+        """Show welcome/instructions."""
+        self.text_area.configure(state=NORMAL)
+        self.text_area.delete("1.0", END)
+
+        welcome = """
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║         📄  AI Chat Viewer - 聊天记录查看器                    ║
+║                                                              ║
+║   使用方法：                                                  ║
+║   1. 将酒馆导出的 .json 文件拖入此窗口                          ║
+║   2. 或点击左上角「📂 打开」选择文件                            ║
+║                                                              ║
+║   功能：                                                      ║
+║   📋 选中文字后 Ctrl+C 复制                                    ║
+║   ✏️ 点击「编辑模式」后可双击消息进行编辑                       ║
+║   💾 修改后点击「保存」写回 JSON                               ║
+║   🔍 使用搜索框或 Ctrl+F 查找内容                             ║
+║   🏷️  可按角色筛选消息                                        ║
+║                                                              ║
+║   支持的格式：SillyTavern (酒馆) 聊天导出 JSON                 ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+"""
+        self.text_area.insert(END, welcome, "content_user")
+        self.text_area.configure(state=DISABLED)
+
+    def _update_sidebar(self):
+        """Update the sidebar message list."""
+        self.tree.delete(*self.tree.get_children())
+
+        if not self.messages:
+            return
+
+        role_filter = self.filter_role.get()
+        search_text = self.search_var.get().strip().lower()
+
+        count = 0
+        for msg in self.messages:
+            role = msg.get("role", "unknown")
+            content = self.edited.get(msg["_index"], msg.get("content", ""))
+            msg_index = msg["_index"]
+
+            if "用户" in role_filter and role != "user":
+                continue
+            if "助手" in role_filter and role != "assistant":
+                continue
+            if "系统" in role_filter and role != "system":
+                continue
+            if search_text and search_text not in content.lower():
+                continue
+
+            # Truncate preview
+            preview = content[:60].replace("\n", " ") + ("…" if len(content) > 60 else "")
+            role_icon = {"user": "🧑", "assistant": "🤖", "system": "⚙️"}.get(role, "📋")
+
+            item_id = self.tree.insert("", END, values=(f"{role_icon} #{msg_index + 1}", preview))
+            count += 1
+
+        self.lbl_msg_count.config(text=f"共 {count} 条消息")
+
+    # ── Interaction ─────────────────────────────────────────────────────
+
+    def _on_tree_select(self, event):
+        """When a message is selected in the sidebar, scroll to it in the text area."""
+        selection = self.tree.selection()
+        if not selection:
+            return
+        values = self.tree.item(selection[0], "values")
+        if values:
+            # Extract index from "🧑 #42" format
+            role_str = values[0]
+            try:
+                idx = int(role_str.split("#")[1]) - 1
+                self._scroll_to_message(idx)
+            except (IndexError, ValueError):
+                pass
+
+    def _on_tree_double_click(self, event):
+        """Double-click a message in the sidebar to edit it."""
+        selection = self.tree.selection()
+        if not selection:
+            return
+        values = self.tree.item(selection[0], "values")
+        if values:
+            try:
+                idx = int(values[0].split("#")[1]) - 1
+                self._open_message_for_edit(idx)
+            except (IndexError, ValueError):
+                pass
+
+    def _scroll_to_message(self, idx):
+        """Scroll the text area to show a specific message by index."""
+        # Since we can't easily map index -> text widget position,
+        # we search for the header marker "#N"
+        self.text_area.configure(state=NORMAL)
+        start = "1.0"
+        search_pattern = f"#{idx + 1}"
+        pos = self.text_area.search(search_pattern, start, stopindex=END, nocase=False)
+        if pos:
+            self.text_area.see(pos)
+            # Highlight temporarily
+            line_start = self.text_area.index(f"{pos} linestart")
+            line_end = self.text_area.index(f"{pos} lineend")
+            self.text_area.tag_add("highlight", line_start, line_end)
+            self.text_area.after(1500, lambda: self.text_area.tag_remove("highlight", line_start, line_end))
+        self.text_area.configure(state=DISABLED)
+
+    def _on_text_motion(self, event):
+        """Handle mouse motion in text area - update cursor for editable regions."""
+        if not self.edit_mode.get():
+            self.text_area.configure(cursor="xterm")
+        else:
+            self.text_area.configure(cursor="hand2")
+
+    def _show_context_menu(self, event):
+        """Show right-click context menu."""
+        try:
+            self.ctx_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.ctx_menu.grab_release()
+
+    def _edit_selected_message(self):
+        """Edit the message under the cursor (from context menu)."""
+        try:
+            cursor_pos = self.text_area.index(INSERT)
+            # Search backward for the nearest header line
+            line = int(cursor_pos.split(".")[0])
+            while line > 0:
+                line_text = self.text_area.get(f"{line}.0", f"{line}.end")
+                if "━━━" in line_text and "#" in line_text:
+                    # Extract message index
+                    import re
+                    match = re.search(r"#(\d+)", line_text)
+                    if match:
+                        idx = int(match.group(1)) - 1
+                        self._open_message_for_edit(idx)
+                        return
+                line -= 1
+        except Exception:
+            pass
+        messagebox.showinfo("提示", "请将光标放在要编辑的消息区域内。")
+
+    # ── Edit Operations ──────────────────────────────────────────────────
+
+    def toggle_edit_mode(self):
+        """Toggle edit mode on/off."""
+        self.edit_mode.set(not self.edit_mode.get())
+        if self.edit_mode.get():
+            self.btn_edit.configure(text="✏️ 编辑模式 (ON)", bg=ACCENT_WARN)
+            self.lbl_status.config(text="编辑模式已开启 - 在左侧列表中双击消息进行编辑")
+
+            # Show edit panel and sidebar
+            if not self.edit_frame.winfo_ismapped():
+                self.edit_frame.pack(side=RIGHT, fill=Y)
+            if not self.sidebar_frame.winfo_ismapped():
+                self.sidebar_frame.pack(side=RIGHT, fill=Y, before=self.edit_frame)
+        else:
+            self.btn_edit.configure(text="✏️ 编辑模式 (Edit)", bg=BG_FIELD)
+            self.lbl_status.config(text="编辑模式已关闭")
+            self._cancel_edit()
+
+    def _open_message_for_edit(self, idx):
+        """Load a message into the edit panel."""
+        if idx < 0 or idx >= len(self.messages):
+            return
+
+        self.edit_msg_index = idx
+        msg = self.messages[idx]
+        role = msg.get("role", "unknown")
+        content = self.edited.get(idx, msg.get("content", ""))
+        timestamp = parse_timestamp(msg.get("createAt", 0))
+
+        self.edit_role_var.set(get_role_label(role))
+        self.edit_time_var.set(timestamp)
+        self.lbl_editing.config(text=f"正在编辑第 {idx + 1} 条消息")
+
+        self.edit_text.configure(state=NORMAL)
+        self.edit_text.delete("1.0", END)
+        self.edit_text.insert("1.0", content)
+        self.edit_text.configure(state=NORMAL)
+        self.edit_text.focus_set()
+
+        # Ensure edit panel is visible
+        if not self.edit_frame.winfo_ismapped():
+            self.edit_frame.pack(side=RIGHT, fill=Y)
+
+    def _apply_edit(self):
+        """Apply the edit from the edit panel to the message."""
+        if self.edit_msg_index is None:
+            messagebox.showinfo("提示", "请先在左侧列表中双击一条消息进行编辑。")
+            return
+
+        new_content = self.edit_text.get("1.0", "end-1c")
+        old_content = self.messages[self.edit_msg_index].get("content", "")
+
+        if new_content == old_content:
+            # Remove from edited if reverted to original
+            self.edited.pop(self.edit_msg_index, None)
+        else:
+            self.edited[self.edit_msg_index] = new_content
+
+        self.refresh_display()
+        self._update_sidebar()
+        self.lbl_status.config(
+            text=f"已修改第 {self.edit_msg_index + 1} 条消息 | 共 {len(self.edited)} 条待保存修改"
+        )
+
+    def _revert_edit(self):
+        """Revert edit panel content to original."""
+        if self.edit_msg_index is None:
+            return
+        original = self.messages[self.edit_msg_index].get("content", "")
+        self.edit_text.configure(state=NORMAL)
+        self.edit_text.delete("1.0", END)
+        self.edit_text.insert("1.0", original)
+
+    def _cancel_edit(self):
+        """Cancel current edit."""
+        self.edit_msg_index = None
+        self.edit_role_var.set("")
+        self.edit_time_var.set("")
+        self.lbl_editing.config(text="双击消息或点击列表来编辑")
+        self.edit_text.configure(state=NORMAL)
+        self.edit_text.delete("1.0", END)
+        self.edit_text.configure(state=DISABLED)
+
+    # ── Copy / Search ────────────────────────────────────────────────────
+
+    def copy_selected(self):
+        """Copy selected text to clipboard."""
+        try:
+            selected = self.text_area.get(SEL_FIRST, SEL_LAST)
+            if selected:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(selected)
+                self.lbl_status.config(text="已复制选中内容到剪贴板")
+            else:
+                messagebox.showinfo("提示", "请先选中文字再复制。\n提示：在消息区域按住鼠标左键拖动即可选中。")
+        except Exception:
+            messagebox.showinfo("提示", "请先选中文字再复制。")
+
+    def copy_all(self):
+        """Copy all displayed messages."""
+        if not self.messages:
+            return
+        all_text = self.text_area.get("1.0", "end-1c")
+        self.root.clipboard_clear()
+        self.root.clipboard_append(all_text)
+        self.lbl_status.config(text="已复制全部内容到剪贴板")
+
+    def focus_search(self, event=None):
+        """Focus the search box."""
+        self.search_entry.focus_set()
+        self.search_entry.select_range(0, END)
+
+    def search_next(self):
+        """Search for the next occurrence of the search text."""
+        search_text = self.search_var.get().strip()
+        if not search_text:
+            self.refresh_display()
+            self._update_sidebar()
+            return
+
+        # Highlight mode: search in the text widget
+        self.text_area.configure(state=NORMAL)
+        self.text_area.tag_remove("highlight", "1.0", END)
+
+        # Start from current position or beginning
+        try:
+            current = self.text_area.index(INSERT)
+        except Exception:
+            current = "1.0"
+
+        pos = self.text_area.search(search_text, current, stopindex=END, nocase=True)
+        if not pos:
+            # Wrap around
+            pos = self.text_area.search(search_text, "1.0", stopindex=END, nocase=True)
+
+        if pos:
+            end_pos = f"{pos}+{len(search_text)}c"
+            self.text_area.tag_add("highlight", pos, end_pos)
+            self.text_area.see(pos)
+            self.text_area.mark_set(INSERT, end_pos)
+            self.lbl_status.config(text=f"找到: \"{search_text}\"")
+        else:
+            self.lbl_status.config(text=f"未找到: \"{search_text}\"")
+
+        self.text_area.configure(state=DISABLED)
+
+    def _on_search_key(self, event):
+        """Live filter as user types in search box."""
+        search_text = self.search_var.get().strip()
+        if len(search_text) >= 2 or (len(search_text) == 0 and event.keysym == "BackSpace"):
+            self.refresh_display()
+            self._update_sidebar()
+
+    # ── Window Management ────────────────────────────────────────────────
+
+    def _on_close(self):
+        """Handle window close."""
+        if self.edited:
+            if messagebox.askyesno("未保存的修改",
+                                   f"有 {len(self.edited)} 条消息已修改但未保存。\n\n确定要退出吗？"):
+                self.root.destroy()
+        else:
+            self.root.destroy()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ══════════════════════════════════════════════════════════════════════════════
+def main():
+    # Check for file argument (drag-onto-exe or command line)
+    filepath = None
+    if len(sys.argv) > 1:
+        filepath = sys.argv[1]
+        if not os.path.isfile(filepath):
+            filepath = None
+
+    ChatViewerApp(filepath=filepath)
+
+if __name__ == "__main__":
+    main()

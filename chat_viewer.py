@@ -721,11 +721,11 @@ class FlatButton(RoundWidget):
             base = (None, pal["text_2"])
             hover = (pal["surface_3"], pal["text"])
         elif variant == "segment":
-            base = (pal["surface_3"], pal["text_2"])
-            hover = (pal["border"], pal["text"])
+            base = (None, pal["text_2"])
+            hover = (pal["surface_3"], pal["text"])
         else:
-            base = (pal["surface_3"], pal["text"])
-            hover = (pal["border"], pal["text"])
+            base = (None, pal["text"])
+            hover = (pal["surface_3"], pal["text"])
         press = (pal["border_strong"], pal["text"]) if variant == "default" else hover
         if self._on:
             base = hover = press = (pal["accent_soft"], pal["accent"])
@@ -743,12 +743,13 @@ class FlatButton(RoundWidget):
         super().configure(bg=pal[self._on_key])
         if fill and HAS_PIL:
             self._resize(width + 2 * AA_MARGIN, height + 2 * AA_MARGIN)
+            lifted = self._press or (self._hover and self._enabled)
             lift = 1 if self._press else (3 if self._hover and self._enabled else 2)
             bw, bh = width * self._scale, height * self._scale
             photo = rounded_photo(self, bw, bh, bh / 2.0, fill=fill,
-                                  outline=_darker(fill, 0.22),
-                                  gloss=_lighter(fill, 0.14),
-                                  shadow=_hex_mix(pal[self._on_key], "#000000", 0.25),
+                                  outline=_darker(fill, 0.22) if lifted else None,
+                                  gloss=_lighter(fill, 0.14) if lifted else None,
+                                  shadow=_hex_mix(pal[self._on_key], "#000000", 0.25) if lifted else None,
                                   shadow_lift=lift)
             self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
                               anchor="center")
@@ -762,13 +763,17 @@ class FlatButton(RoundWidget):
                 y1 = (h - ih) / 2.0
                 x2, y2 = x1 + iw, y1 + ih
                 radius = max(2.0, ih / 2.0)
+                lifted = self._press or (self._hover and self._enabled)
                 lift = S(1) if self._press else (S(3) if self._hover and self._enabled else S(2))
-                rounded_rect(self, x1 + S(1), y1 + lift, x2 - S(1), y2 + lift, radius,
-                             fill=_darker(fill, 0.3))
+                if lifted:
+                    rounded_rect(self, x1 + S(1), y1 + lift, x2 - S(1), y2 + lift, radius,
+                                 fill=_darker(fill, 0.3))
                 rounded_rect(self, x1, y1, x2, y2, radius, fill=fill,
-                             outline=_darker(fill, 0.22), width=S(1))
-                rounded_rect(self, x1 + S(2), y1 + S(1.5), x2 - S(2), y1 + ih * 0.52,
-                             max(2.0, radius * 0.6), fill=_lighter(fill, 0.14))
+                             outline=_darker(fill, 0.22) if lifted else "",
+                             width=S(1) if lifted else 0)
+                if lifted:
+                    rounded_rect(self, x1 + S(2), y1 + S(1.5), x2 - S(2), y1 + ih * 0.52,
+                                 max(2.0, radius * 0.6), fill=_lighter(fill, 0.14))
         self.create_text(self._rw / 2.0, self._rh / 2.0, text=self._text or "",
                          font=self._font, fill=fg, anchor="center")
         super().configure(cursor="hand2" if self._enabled else "arrow")
@@ -844,7 +849,7 @@ class SearchBox(RoundWidget):
         self.entry.pack(side="left", fill="x", expand=True, pady=S(4))
         self.clear_btn = FlatButton(self.inner, theme, text="\u2715", variant="ghost",
                                     font=fonts.small, padx=S(6), pady=0,
-                                    on_key="surface_2", command=self.clear)
+                                    on_key=self._on_key, command=self.clear)
         self._inset = S(10)
 
         uif = self._font_obj(fonts.ui)
@@ -869,15 +874,17 @@ class SearchBox(RoundWidget):
     # -- 外观 --
     def _paint(self, pal):
         self._pal = pal
-        self.inner.configure(bg=pal["surface_2"])
-        self.glyph.configure(bg=pal["surface_2"], fg=pal["text_3"], font=self._fonts.small)
+        bg_key = self._on_key
+        super().configure(bg=pal[bg_key])
+        self.inner.configure(bg=pal[bg_key])
+        self.glyph.configure(bg=pal[bg_key], fg=pal["text_3"], font=self._fonts.small)
         self.entry.configure(
-            bg=pal["surface_2"],
+            bg=pal[bg_key],
             fg=pal["text_3"] if self._placeholder else pal["text"],
             insertbackground=pal["accent"],
             selectbackground=pal["select"],
             selectforeground=pal["text"],
-            readonlybackground=pal["surface_2"],
+            readonlybackground=pal[bg_key],
         )
         self.delete("bg")
         focused = False
@@ -885,15 +892,24 @@ class SearchBox(RoundWidget):
             focused = self.entry.focus_get() is self.entry
         except Exception:
             focused = False
-        outline = pal["accent"] if focused else pal["border_strong"]
+        # 透明融入背景：空闲无描边，有内容细描边，聚焦主题色描边
+        has_text = bool(self.var.get().strip()) and not self._placeholder
+        if focused:
+            outline = pal["accent"]
+        elif has_text:
+            outline = pal["border"]
+        else:
+            outline = None
+        if outline is None:
+            return
         if HAS_PIL:
             photo = rounded_photo(self, self._rw - 2 * AA_MARGIN,
                                   self._rh - 2 * AA_MARGIN, S(12),
-                                  fill=pal["surface_2"], outline=outline)
+                                  outline=outline)
             item = self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
                                      anchor="center", tags=("bg",))
         else:
-            item = self._round(pal["surface_2"], outline, pill=False)
+            item = self._round(None, outline, pill=False)
             self.addtag_withtag("bg", item)
         self.tag_lower(item)
 
@@ -915,6 +931,7 @@ class SearchBox(RoundWidget):
         self.var.set(value if value else PLACEHOLDER)
         if hasattr(self, "_pal"):
             self.entry.configure(fg=self._pal["text"] if value else self._pal["text_3"])
+            self._paint_ring()
 
     def clear(self):
         self.set_text("")
@@ -945,6 +962,8 @@ class SearchBox(RoundWidget):
     def _on_var_change(self, *_args):
         value = self.text()
         self._toggle_clear(bool(value))
+        if hasattr(self, "_pal"):
+            self._paint_ring()
         if self._on_change:
             self._on_change(value)
 

@@ -1,4 +1,4 @@
-# Chat-Check
+﻿# Chat-Check
 一个用于酒馆DZMM导出的聊天json文件查看器。
 
 ## 功能
@@ -14,6 +14,7 @@
 ## 运行
 - 源码：`python chat_viewer.py [chat_export_xxx.json]`（Python 3.10+；可选依赖 tkinterdnd2 支持拖入文件）
 - 打包版：`dist/AI_Chat_Viewer.exe`（重建：`python -m PyInstaller AI_Chat_Viewer.spec --noconfirm`）
+- 最新打包版下载：[Releases 页](https://github.com/huangliang30/Chat-Check/releases)（`AI_Chat_Viewer.exe` 单文件绿色版）
 
 ## 快捷键
 | 快捷键 | 功能 |

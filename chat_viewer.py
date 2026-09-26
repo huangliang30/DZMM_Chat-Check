@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import filedialog, messagebox, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 
 try:
     from tkinterdnd2 import TkinterDnD
@@ -78,6 +78,7 @@ DEFAULT_SETTINGS = {
     "height": 760,
     "last_dir": "",
     "quote_highlight": True,
+    "quote_color": "",
 }
 
 
@@ -268,7 +269,6 @@ FILTERS = [
     ("all", "全部"),
     ("user", "user"),
     ("assistant", "char"),
-    ("system", "系统"),
 ]
 
 
@@ -708,6 +708,44 @@ class FlatButton(RoundWidget):
         super().configure(cursor="hand2" if self._enabled else "arrow")
 
 
+class ColorSwatch(RoundWidget):
+    """圆形色块按钮：点击选择引号高亮颜色。"""
+
+    def __init__(self, master, theme, color="#888888", command=None, **kw):
+        super().__init__(master, theme, **kw)
+        self._color = color
+        self._command = command
+        self._hover = False
+        self.bind("<Enter>", lambda e: self._hover_paint(True))
+        self.bind("<Leave>", lambda e: self._hover_paint(False))
+        self.bind("<ButtonRelease-1>", self._on_up)
+        theme.subscribe(self._guarded_paint)
+
+    def set_color(self, color):
+        self._color = color
+        self._paint(self._theme.pal)
+
+    def _hover_paint(self, on):
+        self._hover = on
+        self._paint(self._theme.pal)
+
+    def _on_up(self, event=None):
+        inside = event is None or (0 <= event.x <= self._rw and 0 <= event.y <= self._rh)
+        if inside and self._command:
+            self._command()
+
+    def _paint(self, pal):
+        size = S(24)
+        self._resize(size, size)
+        self.delete("all")
+        super().configure(bg=pal[self._on_key])
+        pad = S(5)
+        outline = pal["border_strong"] if self._hover else None
+        self.create_oval(pad, pad, size - pad, size - pad, fill=self._color,
+                         outline=outline or "", width=S(1) if outline else 0)
+        super().configure(cursor="hand2")
+
+
 class SearchBox(RoundWidget):
     """圆角搜索框：canvas 画底与聚焦环，内嵌输入行。"""
 
@@ -1047,9 +1085,13 @@ class ChatViewerApp:
         self.btn_save = FlatButton(bar, self.theme, text="保存", variant="default",
                                    font=self.fonts.ui, command=self.save_file)
         self.btn_save.pack(side="left", padx=S(3), pady=S(9))
-        self.btn_quote = FlatButton(bar, self.theme, text="“”高亮", variant="ghost",
+        self.btn_quote = FlatButton(bar, self.theme, text="高亮", variant="ghost",
                                     font=self.fonts.ui, command=self.toggle_quote_highlight)
-        self.btn_quote.pack(side="left", padx=S(3), pady=S(9))
+        self.btn_quote.pack(side="left", padx=(S(3), S(1)), pady=S(9))
+        self.btn_quote_color = ColorSwatch(bar, self.theme, color=self._quote_color(),
+                                           command=self.choose_quote_color)
+        self.btn_quote_color.pack(side="left", padx=S(1), pady=S(9))
+        self.btn_quote_color.bind("<Button-3>", lambda e: self.set_quote_color(""))
         self.btn_export = FlatButton(bar, self.theme, text="导出", variant="ghost",
                                      font=self.fonts.ui, command=self.export_txt)
         self.btn_export.pack(side="left", padx=S(3), pady=S(9))
@@ -1405,7 +1447,7 @@ class ChatViewerApp:
                            spacing1=S(22), spacing3=S(13))
         area.tag_configure("hdr_line", spacing1=S(15), spacing3=S(7))
         area.tag_configure("date_line", justify="center", spacing1=S(22), spacing3=S(13))
-        area.tag_configure("quote", background=pal["accent_soft"], foreground=pal["accent"])
+        area.tag_configure("quote", foreground=self._quote_color(pal))
         area.tag_configure("flash", background=pal["flash"])
         area.tag_configure("hl", background=pal["hl"], foreground=pal["hl_fg"])
         area.tag_configure("hl_cur", background=pal["hl_cur"], foreground=pal["hl_fg"])
@@ -1570,7 +1612,12 @@ class ChatViewerApp:
 
     # ══════════════════════════ 渲染 ══════════════════════════
     ITALIC_RE = re.compile(r"\*([^*\n]{1,300})\*")
-    QUOTE_RE = re.compile("“([^”\n]{1,300})”")
+    QUOTE_RE = re.compile(
+        "“([^”]{1,2000}?)”"
+        "|\"([^\"]{1,2000}?)\""
+        "|「([^」]{1,2000}?)」"
+        "|『([^』]{1,2000}?)』",
+        re.S)
 
     def _iter_visible(self):
         key = self.filter_key
@@ -1658,10 +1705,12 @@ class ChatViewerApp:
                                          "%s+%dc" % (body_start, match.end(1)))
                     if self.settings.get("quote_highlight", True):
                         for match in self.QUOTE_RE.finditer(content):
-                            if match.group(1).strip():
-                                area.tag_add("quote",
-                                             "%s+%dc" % (body_start, match.start(1)),
-                                             "%s+%dc" % (body_start, match.end(1)))
+                            for group in range(1, 5):
+                                if match.group(group) and match.group(group).strip():
+                                    area.tag_add("quote",
+                                                 "%s+%dc" % (body_start, match.start(group)),
+                                                 "%s+%dc" % (body_start, match.end(group)))
+                                    break
                 area.insert("end", "\n", body_tags)
                 area.insert("end", "\n", ("gap",))
 
@@ -2103,11 +2152,42 @@ class ChatViewerApp:
                                                 (" · " + stamp) if stamp else "", content))
         return "\n\n".join(chunks) + ("\n" if chunks else "")
 
+    def _plain_text(self):
+        chunks = []
+        for msg in self.visible:
+            idx = msg["_index"]
+            content = (self.edited.get(idx, msg.get("content", "")) or "").strip()
+            if content:
+                chunks.append(content)
+        return "\n\n".join(chunks) + ("\n" if chunks else "")
+
     def copy_all(self):
         if not self.visible:
             self._set_status("没有可复制的消息")
             return
         self._copy_text(self._transcript_text(), "已复制 %d 条消息" % len(self.visible))
+
+    def _quote_color(self, pal=None):
+        pal = pal or self.theme.pal
+        color = (self.settings.get("quote_color") or "").strip()
+        if re.match(r"^#[0-9a-fA-F]{6}$", color):
+            return color
+        return pal["accent"]
+
+    def set_quote_color(self, value):
+        self.settings["quote_color"] = (value or "").strip()
+        save_settings(self.settings)
+        self.btn_quote_color.set_color(self._quote_color())
+        self._apply_text_theme(self.theme.pal)
+        self._set_status("高亮颜色已%s" % ("恢复默认" if not value
+                                         else "设为 " + self.settings["quote_color"]))
+
+    def choose_quote_color(self):
+        picked = colorchooser.askcolor(parent=self.root, title="选择引号高亮颜色",
+                                       initialcolor=self._quote_color())
+        hexval = (picked[1] or "").strip()
+        if re.match(r"^#[0-9a-fA-F]{6}$", hexval):
+            self.set_quote_color(hexval)
 
     def toggle_quote_highlight(self):
         enabled = not bool(self.settings.get("quote_highlight", True))
@@ -2132,7 +2212,7 @@ class ChatViewerApp:
             return
         try:
             with open(path, "w", encoding="utf-8") as handle:
-                handle.write(self._transcript_text())
+                handle.write(self._plain_text())
         except Exception as exc:
             messagebox.showerror("导出失败", "写入文件时出错：\n%s" % exc)
             return

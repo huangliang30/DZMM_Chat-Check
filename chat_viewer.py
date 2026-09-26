@@ -455,16 +455,58 @@ def extract_messages(json_data):
 GENERIC_TITLES = {"会话", "未命名会话", "new chat", "untitled", ""}
 
 
+CHAT_FILE_RE = re.compile(r"^chat_export_[0-9a-fA-F\-]{8,}_(.+)\.json$")
+
+
+def title_from_filename(filepath):
+    """从导出文件名中提取剧本名（中文部分）。"""
+    base = os.path.basename(filepath or "")
+    match = CHAT_FILE_RE.match(base)
+    if match:
+        return match.group(1).strip()
+    return os.path.splitext(base)[0] or "未命名会话"
+
+
+def _looks_like_chat_json(path):
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(8192)
+    except OSError:
+        return False
+    return b'"role"' in head or b'"mes"' in head or b'"chat"' in head
+
+
+def scan_chat_folder(folder):
+    """扫描文件夹内类似聊天记录的 JSON，返回 [(title, mtime, path)]，按修改时间倒序。"""
+    items = []
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return items
+    for name in names:
+        if not name.lower().endswith(".json"):
+            continue
+        path = os.path.join(folder, name)
+        if not os.path.isfile(path):
+            continue
+        if not (CHAT_FILE_RE.match(name) or name.lower().startswith("chat_export_")
+                or _looks_like_chat_json(path)):
+            continue
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        items.append((title_from_filename(path), mtime, path))
+    items.sort(key=lambda item: (-item[1], item[0]))
+    return items
+
+
 def display_title(chat_data, filepath):
     """chat.title 常常是「会话」，此时改用文件名里的剧本名。"""
     title = (chat_data.get("title") or "").strip()
     if title.lower() not in GENERIC_TITLES:
         return title
-    base = os.path.basename(filepath or "")
-    match = re.match(r"^chat_export_[0-9a-fA-F\-]{8,}_(.+)\.json$", base)
-    if match:
-        return match.group(1).strip()
-    return os.path.splitext(base)[0] or title or "未命名会话"
+    return title_from_filename(filepath)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -831,7 +873,7 @@ class SearchBox(RoundWidget):
     """圆角搜索框：canvas 画底与聚焦环，内嵌输入行。"""
 
     def __init__(self, master, theme, fonts, on_change=None, on_enter=None,
-                 on_shift_enter=None, on_escape=None, width=24):
+                 on_shift_enter=None, on_escape=None, width=24, placeholder=None):
         super().__init__(master, theme, radius=S(12))
         self._fonts = fonts
         self._on_change = on_change
@@ -839,6 +881,7 @@ class SearchBox(RoundWidget):
         self._on_shift_enter = on_shift_enter
         self._on_escape = on_escape
         self._placeholder = True
+        self._placeholder_text = placeholder or PLACEHOLDER
         self._clear_visible = False
 
         self.inner = tk.Frame(self)
@@ -911,7 +954,7 @@ class SearchBox(RoundWidget):
     # -- 占位符 --
     def _show_placeholder(self):
         self._placeholder = True
-        self.var.set(PLACEHOLDER)
+        self.var.set(self._placeholder_text)
         if hasattr(self, "_pal"):
             self.entry.configure(fg=self._pal["text_3"])
 
@@ -1101,6 +1144,185 @@ def ellipsis(text, limit):
 # ══════════════════════════════════════════════════════════════════════════
 #  主程序
 # ══════════════════════════════════════════════════════════════════════════
+class FolderPanel(TFrame):
+    """内嵌的文件夹聊天文件列表（非弹窗）：按标题过滤，双击 / 回车打开。"""
+
+    def __init__(self, master, app):
+        super().__init__(master, app.theme, bg_key="bg")
+        self.app = app
+        self.theme = app.theme
+        self.fonts = app.fonts
+        self.folder = ""
+        self.items = []
+        self.filtered = []
+        self.selected = 0
+        self._hover_line = None
+
+        head = TFrame(self, self.theme, bg_key="bg")
+        head.pack(side="top", fill="x", padx=S(16), pady=(S(14), S(6)))
+        TLabel(head, self.theme, text="文件夹聊天文件", bg_key="bg", fg_key="text",
+               font=self.fonts.section).pack(side="left")
+        self.count_chip = Chip(head, self.theme, text="0", bg_key="surface_2",
+                               fg_key="text_2", font=self.fonts.small_bold)
+        self.count_chip.pack(side="right")
+        self.path_label = TLabel(self, self.theme, text="", bg_key="bg",
+                                 fg_key="text_3", font=self.fonts.tiny, anchor="w")
+        self.path_label.pack(side="top", fill="x", padx=S(16))
+        bar = TFrame(self, self.theme, bg_key="bg")
+        bar.pack(side="top", fill="x", padx=S(16), pady=(S(10), S(8)))
+        self.filter_box = SearchBox(bar, self.theme, self.fonts, width=24,
+                                    placeholder="过滤标题…",
+                                    on_change=self._on_filter,
+                                    on_enter=self.confirm)
+        self.filter_box.pack(side="left")
+        self.filter_box.entry.bind("<Up>", self._on_arrow)
+        self.filter_box.entry.bind("<Down>", self._on_arrow)
+        self.btn_rescan = FlatButton(bar, self.theme, text="重新扫描", variant="ghost",
+                                     font=self.fonts.ui, command=self.rescan)
+        self.btn_rescan.pack(side="right")
+
+        holder = TFrame(self, self.theme, bg_key="bg")
+        holder.pack(side="top", fill="both", expand=True, padx=S(16))
+        self.list_text = tk.Text(holder, wrap="none", bd=0, relief="flat",
+                                 highlightthickness=0, state="disabled",
+                                 cursor="hand2", padx=S(8), pady=S(6),
+                                 insertwidth=0, font=self.fonts.ui,
+                                 spacing1=0, spacing2=0, spacing3=0)
+        scroll = ttk.Scrollbar(holder, orient="vertical",
+                               command=self.list_text.yview,
+                               style="Side.Vertical.TScrollbar")
+        self.list_text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        self.list_text.pack(side="left", fill="both", expand=True)
+        self.list_text.bind("<Button-1>", self._on_click)
+        self.list_text.bind("<Double-Button-1>", self._on_double)
+        self.list_text.bind("<Motion>", self._on_motion)
+        self.list_text.bind("<Leave>", self._on_leave)
+
+        TLabel(self, self.theme, text="双击或回车打开选中文件 · Esc 返回",
+               bg_key="bg", fg_key="text_3", font=self.fonts.tiny).pack(
+            side="bottom", fill="x", padx=S(16), pady=(S(6), S(12)))
+        self.theme.subscribe(self._apply_theme)
+
+    # -- 主题 --
+    def _apply_theme(self, pal):
+        area = self.list_text
+        area.configure(bg=pal["surface"], fg=pal["text"],
+                       insertbackground=pal["accent"])
+        area.tag_configure("row", foreground=pal["text"],
+                           spacing1=S(4), spacing3=S(4))
+        area.tag_configure("meta", foreground=pal["text_3"], font=self.fonts.tiny)
+        area.tag_configure("hover", background=pal["surface_2"])
+        area.tag_configure("pick", background=pal["accent_soft"],
+                           foreground=pal["accent"])
+        area.tag_raise("hover")
+        area.tag_raise("pick")
+        area.tag_raise("meta")
+
+    # -- 数据 --
+    def set_items(self, folder, items):
+        self.folder = folder
+        self.items = list(items)
+        self.path_label.configure(text=ellipsis(folder, 90))
+        self.filter_box.set_text("")
+        self.selected = 0
+        self._render()
+
+    def rescan(self):
+        if not self.folder:
+            return
+        self.set_items(self.folder, scan_chat_folder(self.folder))
+        self.app._set_status("已重新扫描：%s" % ellipsis(self.folder, 50))
+
+    # -- 列表 --
+    def _render(self):
+        self.count_chip.configure(text=str(len(self.filtered)))
+        area = self.list_text
+        area.configure(state="normal")
+        area.delete("1.0", "end")
+        for i, (title, mtime, _path) in enumerate(self.filtered):
+            area.insert("end", title, ("row",))
+            stamp = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+            area.insert("end", "   " + stamp, ("meta",))
+            if i < len(self.filtered) - 1:
+                area.insert("end", "\n", ("row",))
+        area.configure(state="disabled")
+        if self.selected >= len(self.filtered):
+            self.selected = max(0, len(self.filtered) - 1)
+        self._sync_selection()
+
+    def _sync_selection(self):
+        area = self.list_text
+        area.tag_remove("pick", "1.0", "end")
+        if self.filtered:
+            line = self.selected + 1
+            area.tag_add("pick", "%d.0" % line, "%d.end" % line)
+            area.see("%d.0" % line)
+
+    def _line_at(self, event):
+        idx = self.list_text.index("@%d,%d" % (event.x, event.y))
+        line = int(idx.split(".")[0]) - 1
+        return max(0, min(line, len(self.filtered) - 1))
+
+    def _on_click(self, event):
+        if not self.filtered:
+            return
+        self.selected = self._line_at(event)
+        self._sync_selection()
+
+    def _on_double(self, event):
+        if not self.filtered:
+            return
+        self.selected = self._line_at(event)
+        self.confirm()
+
+    def _on_motion(self, event):
+        if not self.filtered:
+            return
+        line = self._line_at(event)
+        if line == self._hover_line:
+            return
+        area = self.list_text
+        area.tag_remove("hover", "1.0", "end")
+        self._hover_line = line
+        if line != self.selected:
+            area.tag_add("hover", "%d.0" % (line + 1), "%d.end" % (line + 1))
+
+    def _on_leave(self, _event=None):
+        self._hover_line = None
+        self.list_text.tag_remove("hover", "1.0", "end")
+
+    def _on_arrow(self, event):
+        self.move_sel(1 if event.keysym == "Down" else -1)
+        return "break"
+
+    def move_sel(self, delta):
+        if not self.filtered:
+            return
+        self.selected = max(0, min(self.selected + delta, len(self.filtered) - 1))
+        self._sync_selection()
+
+    # -- 过滤 / 确认 --
+    def _on_filter(self, *_args):
+        box = getattr(self, "filter_box", None)
+        if box is None:
+            return
+        key = (box.text() or "").strip()
+        low = key.lower()
+        self.filtered = [it for it in self.items
+                         if not low or low in it[0].lower()
+                         or low in os.path.basename(it[2]).lower()]
+        self.selected = 0
+        self._render()
+
+    def confirm(self, *_args):
+        if not self.filtered:
+            return
+        path = self.filtered[self.selected][2]
+        self.app.exit_folder_mode()
+        self.app._load_json(path)
+
+
 class ChatViewerApp:
     def __init__(self, filepath=None):
         self.settings = load_settings()
@@ -1141,6 +1363,7 @@ class ChatViewerApp:
         self._geom_job = None
         self.cursor_index = None
         self._last_dir = self.settings.get("last_dir") or ""
+        self._folder_mode = False
 
         # ── 窗口 ──
         screen_w = self.root.winfo_screenwidth()
@@ -1177,6 +1400,7 @@ class ChatViewerApp:
         # ── 快捷键 / 事件 ──
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.bind("<Control-o>", lambda e: self.open_file())
+        self.root.bind("<Control-Shift-o>", lambda e: self.open_folder())
         self.root.bind("<Control-s>", lambda e: self.save_file())
         self.root.bind("<Control-c>", lambda e: self.copy_selected())
         self.root.bind("<Control-e>", lambda e: self.toggle_edit_mode())
@@ -1248,6 +1472,9 @@ class ChatViewerApp:
         self.btn_open = FlatButton(bar, self.theme, text="打开", variant="primary",
                                    font=self.fonts.ui, command=self.open_file)
         self.btn_open.pack(side="left", padx=(S(2), S(3)), pady=S(9))
+        self.btn_folder = FlatButton(bar, self.theme, text="文件夹", variant="ghost",
+                                     font=self.fonts.ui, command=self.open_folder)
+        self.btn_folder.pack(side="left", padx=S(3), pady=S(9))
         self.btn_copy = FlatButton(bar, self.theme, text="复制", variant="ghost",
                                    font=self.fonts.ui, command=self.copy_selected)
         self.btn_copy.pack(side="left", padx=S(3), pady=S(9))
@@ -1369,6 +1596,7 @@ class ChatViewerApp:
         self.stage.pack(side="left", fill="both", expand=True)
         self._build_transcript()
         self._build_empty_state()
+        self.folder_panel = FolderPanel(self.stage, self)
 
         self.edit_panel = TFrame(self.body, self.theme, bg_key="surface", width=S(372))
         self.edit_panel.pack_propagate(False)
@@ -1427,6 +1655,7 @@ class ChatViewerApp:
             ("Ctrl + H", "引号高亮"),
             ("Ctrl + R", "查找替换"),
             ("Ctrl + T", "操作栏收展"),
+            ("Ctrl+Shift+O", "文件夹选片"),
         ]
         for row, (key, desc) in enumerate(shortcuts):
             cell = TFrame(tips, self.theme, bg_key="bg")
@@ -1436,10 +1665,17 @@ class ChatViewerApp:
             TLabel(cell, self.theme, text=desc, bg_key="bg", fg_key="text_3",
                    font=self.fonts.small).pack(side="left", padx=(S(8), S(18)))
 
-        self.empty_open = FlatButton(box, self.theme, text="选择 JSON 文件", variant="primary",
+        pick_row = TFrame(box, self.theme, bg_key="bg")
+        pick_row.pack(pady=(S(22), 0))
+        self.empty_open = FlatButton(pick_row, self.theme, text="选择 JSON 文件", variant="primary",
                                      font=self.fonts.ui_bold, padx=S(18), pady=S(7),
                                      on_key="bg", command=self.open_file)
-        self.empty_open.pack(pady=(S(22), 0))
+        self.empty_open.pack(side="left", padx=(0, S(8)))
+        self.empty_folder = FlatButton(pick_row, self.theme, text="选择文件夹",
+                                       variant="primary", font=self.fonts.ui_bold,
+                                       padx=S(18), pady=S(7), on_key="bg",
+                                       command=self.open_folder)
+        self.empty_folder.pack(side="left")
 
     def _draw_art(self, pal):
         canvas = self.art
@@ -1701,6 +1937,52 @@ class ChatViewerApp:
         )
         if filepath and os.path.isfile(filepath):
             self._load_json(filepath)
+
+    def open_folder(self):
+        initial = self._last_dir if (self._last_dir and os.path.isdir(self._last_dir)) else None
+        folder = filedialog.askdirectory(title="选择含聊天 JSON 的文件夹",
+                                         initialdir=initial)
+        if not folder:
+            return
+        items = scan_chat_folder(folder)
+        if not items:
+            messagebox.showinfo(
+                "未找到文件",
+                "该文件夹下没有聊天记录 JSON。\n支持 chat_export_*.json，或含聊天结构的 .json 文件。")
+            return
+        self._last_dir = folder
+        self.settings["last_dir"] = folder
+        self.folder_panel.set_items(folder, items)
+        self._enter_folder_mode()
+
+    def _enter_folder_mode(self):
+        self._folder_mode = True
+        self.chat_frame.pack_forget()
+        self.empty_state.pack_forget()
+        self.folder_panel.pack(side="left", fill="both", expand=True)
+        self.sidebar.pack_forget()
+        self.sidebar_line.pack_forget()
+        self._set_infobar_visible(False)
+        self.btn_folder.set_on(True)
+        self.folder_panel.filter_box.entry.focus_set()
+        self._set_status("文件夹 %s · %d 个聊天文件"
+                         % (ellipsis(os.path.basename(self.folder_panel.folder) or self.folder_panel.folder, 40),
+                            len(self.folder_panel.filtered)))
+
+    def exit_folder_mode(self):
+        if not self._folder_mode:
+            return
+        self._folder_mode = False
+        self.folder_panel.pack_forget()
+        self.btn_folder.set_on(False)
+        if self.chat_data:
+            self._hide_empty_state()
+            self._set_infobar_visible(True)
+            if self._want_sidebar:
+                self.sidebar.pack(side="left", fill="y", before=self.stage)
+                self.sidebar_line.pack(side="left", fill="y", before=self.stage)
+        else:
+            self._show_empty_state()
 
     def _on_drop(self, event):
         data = event.data or ""
@@ -2794,6 +3076,9 @@ class ChatViewerApp:
             pass
 
     def _on_escape(self):
+        if self._folder_mode:
+            self.exit_folder_mode()
+            return
         if self.edit_panel.winfo_ismapped():
             self._close_edit_panel()
             return

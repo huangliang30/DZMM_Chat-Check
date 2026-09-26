@@ -1140,6 +1140,7 @@ class ChatViewerApp:
         self.side_selected = None
         self.side_hover_line = None
         self.hl_ranges = []
+        self.body_blocks = {}
         self.hl_pos = -1
         self.edit_msg_index = None
         self.edit_mode = tk.BooleanVar(value=False)
@@ -1169,6 +1170,7 @@ class ChatViewerApp:
         self.theme.subscribe(lambda pal: self.root.configure(bg=pal["bg"]))
         self.theme.subscribe(self._apply_ttk)
         self._build_toolbar()
+        self._build_replace_bar()
         self._build_infobar()
         self._build_statusbar()
         self._build_body()
@@ -1189,6 +1191,7 @@ class ChatViewerApp:
         self.root.bind("<Control-f>", lambda e: self.focus_search())
         self.root.bind("<Control-h>", lambda e: self.toggle_quote_highlight())
         self.root.bind("<Control-t>", lambda e: self.toggle_toolbar())
+        self.root.bind("<Control-r>", lambda e: self.toggle_replace())
         self.root.bind("<Control-plus>", lambda e: self.change_font_size(1))
         self.root.bind("<Control-equal>", lambda e: self.change_font_size(1))
         self.root.bind("<Control-minus>", lambda e: self.change_font_size(-1))
@@ -1272,6 +1275,9 @@ class ChatViewerApp:
         self.btn_export = FlatButton(bar, self.theme, text="导出", variant="ghost",
                                      font=self.fonts.ui, command=self.export_txt)
         self.btn_export.pack(side="left", padx=S(3), pady=S(9))
+        self.btn_replace = FlatButton(bar, self.theme, text="替换", variant="ghost",
+                                      font=self.fonts.ui, command=self.toggle_replace)
+        self.btn_replace.pack(side="left", padx=(S(3), S(1)), pady=S(9))
 
         # 右侧工具（先 pack 的在最右）
         self.btn_collapse = FlatButton(bar, self.theme, text="收起", variant="ghost",
@@ -1427,6 +1433,7 @@ class ChatViewerApp:
             ("Ctrl + E", "编辑模式"),
             ("Ctrl + C", "复制选中"),
             ("Ctrl + H", "引号高亮"),
+            ("Ctrl + R", "查找替换"),
             ("Ctrl + T", "操作栏收展"),
         ]
         for row, (key, desc) in enumerate(shortcuts):
@@ -1829,6 +1836,7 @@ class ChatViewerApp:
         with self._editable(area):
             area.delete("1.0", "end")
             self.blocks = {}
+            self.body_blocks = {}
             self.line_blocks = []
 
             if not self.messages:
@@ -1896,6 +1904,8 @@ class ChatViewerApp:
                                                  "%s+%dc" % (body_start, match.start(group)),
                                                  "%s+%dc" % (body_start, match.end(group)))
                                     break
+                body_end = area.index("end-1c")
+                self.body_blocks[idx] = (body_start, body_end)
                 area.insert("end", "\n", body_tags)
                 area.insert("end", "\n", ("gap",))
 
@@ -2467,6 +2477,7 @@ class ChatViewerApp:
                 area.tag_add("hl", start, end)
         self.hl_ranges = found
         self.match_label.configure(text="%d 处" % len(found))
+        self._refresh_replace_count()
 
     def _goto_highlight(self, index):
         if not self.hl_ranges:
@@ -2500,6 +2511,159 @@ class ChatViewerApp:
         self._goto_highlight(self.hl_pos - 1)
 
     # ══════════════════════════ 视图控制 ══════════════════════════
+    def _build_replace_bar(self):
+        """查找替换条：复用搜索词作为查找内容，替换结果走 edited 待保存机制。"""
+        bar = TFrame(self.root, self.theme, bg_key="surface")
+        self.replace_bar = bar
+        self.replace_line = TFrame(self.root, self.theme, bg_key="border", height=1)
+
+        inner = TFrame(bar, self.theme, bg_key="surface")
+        inner.pack(side="left", fill="x", expand=True, padx=S(14), pady=S(6))
+        TLabel(inner, self.theme, text="替换为", bg_key="surface", fg_key="text_3",
+               font=self.fonts.small).pack(side="left", padx=(0, S(8)))
+        self.replace_var = tk.StringVar()
+        self.replace_entry = tk.Entry(inner, textvariable=self.replace_var,
+                                      font=self.fonts.ui, relief="flat", bd=0,
+                                      highlightthickness=0, width=26, insertwidth=S(1))
+        self.replace_entry.pack(side="left")
+        self.theme.subscribe(self._paint_replace_entry)
+        self.btn_repl_one = FlatButton(inner, self.theme, text="替换", variant="ghost",
+                                       font=self.fonts.ui, command=self.replace_current)
+        self.btn_repl_one.pack(side="left", padx=(S(10), S(3)))
+        self.btn_repl_all = FlatButton(inner, self.theme, text="全部替换", variant="ghost",
+                                       font=self.fonts.ui, command=self.replace_all)
+        self.btn_repl_all.pack(side="left", padx=S(3))
+        self.repl_count = TLabel(inner, self.theme, text="", bg_key="surface",
+                                 fg_key="text_3", font=self.fonts.small)
+        self.repl_count.pack(side="left", padx=(S(10), 0))
+        self.btn_repl_close = FlatButton(inner, self.theme, text="\u2715", variant="ghost",
+                                         font=self.fonts.small, padx=S(8),
+                                         command=self.toggle_replace)
+        self.btn_repl_close.pack(side="right", padx=(S(8), S(14)))
+        self.replace_entry.bind("<Return>", lambda e: self.replace_current())
+        self.replace_entry.bind("<Escape>", lambda e: self.toggle_replace())
+
+    def _paint_replace_entry(self, pal):
+        self.replace_entry.configure(
+            bg=pal["surface"], fg=pal["text"], insertbackground=pal["accent"],
+            selectbackground=pal["select"], selectforeground=pal["text"])
+
+    def toggle_replace(self, _event=None):
+        visible = bool(self.replace_bar.winfo_ismapped())
+        if visible:
+            self.replace_bar.pack_forget()
+            self.replace_line.pack_forget()
+            self.text_area.focus_set()
+        else:
+            anchor = (self.infobar if getattr(self, "_infobar_visible", False)
+                      else self.body)
+            self.replace_bar.pack(side="top", fill="x", before=anchor)
+            self.replace_line.pack(side="top", fill="x", before=anchor)
+            self._refresh_replace_count()
+            self.replace_entry.focus_set()
+        self._set_status("替换条已%s" % ("隐藏" if visible else
+                          "显示（回车替换当前匹配，或点「全部替换」）"))
+
+    def _refresh_replace_count(self):
+        if not getattr(self, "repl_count", None) or not self.replace_bar.winfo_ismapped():
+            return
+        term = self._search_term()
+        if not term:
+            self.repl_count.configure(text="")
+            return
+        low = term.lower()
+        total = 0
+        for msg in self.visible:
+            idx = msg["_index"]
+            content = (self.edited.get(idx, msg.get("content", "")) or "").lower()
+            total += content.count(low)
+        self.repl_count.configure(text="视图内 %d 处可替换" % total)
+
+    def _match_in_content(self, start_index):
+        """把正文区的匹配位置映射回（消息下标，内容偏移）。"""
+        area = self.text_area
+        for msg in self.visible:
+            idx = msg["_index"]
+            rng = self.body_blocks.get(idx)
+            if not rng:
+                continue
+            bs, be = rng
+            if area.compare(start_index, ">=", bs) and area.compare(start_index, "<", be):
+                return idx, len(area.get(bs, start_index))
+        return None
+
+    def _set_edited(self, idx, new_content):
+        original = self.messages[idx].get("content", "") or ""
+        if new_content == original:
+            self.edited.pop(idx, None)
+        else:
+            self.edited[idx] = new_content
+
+    def _sync_edit_panel(self, idx):
+        if self.edit_msg_index == idx and self.edit_panel.winfo_ismapped():
+            self._open_message_for_edit(idx)
+
+    def replace_current(self, _event=None):
+        term = self._search_term()
+        if not term:
+            self._set_status("请先在搜索框输入查找内容")
+            return 0
+        if not self.hl_ranges:
+            self._apply_search_highlights()
+        if not self.hl_ranges:
+            self._set_status("没有可替换的匹配")
+            return 0
+        pos = self.hl_pos if 0 <= self.hl_pos < len(self.hl_ranges) else 0
+        start, _end = self.hl_ranges[pos]
+        target = self._match_in_content(start)
+        if target is None:
+            self._set_status("当前匹配位于标题 / 元数据行，已跳过")
+            self._goto_highlight(pos + 1)
+            return 0
+        idx, off = target
+        repl = self.replace_var.get()
+        raw = self.edited.get(idx, self.messages[idx].get("content", "")) or ""
+        new = raw[:off] + repl + raw[off + len(term):]
+        self._set_edited(idx, new)
+        self._sync_edit_panel(idx)
+        self.refresh_display(keep_scroll=True)
+        self._update_saved_chip()
+        if self.hl_ranges:
+            self._goto_highlight(min(pos, len(self.hl_ranges) - 1))
+        if self.edited:
+            self._set_status("已替换 1 处 · %d 条待保存（Ctrl+S 保存）" % len(self.edited))
+        else:
+            self._set_status("已替换 1 处 · 没有待保存的修改")
+        return 1
+
+    def replace_all(self, _event=None):
+        term = self._search_term()
+        if not term:
+            self._set_status("请先在搜索框输入查找内容")
+            return 0
+        repl = self.replace_var.get()
+        pattern = re.compile(re.escape(term), re.IGNORECASE)
+        total = 0
+        touched = []
+        for msg in list(self.visible):
+            idx = msg["_index"]
+            raw = self.edited.get(idx, msg.get("content", "")) or ""
+            new, n = pattern.subn(lambda _m: repl, raw)
+            if n:
+                total += n
+                touched.append(idx)
+                self._set_edited(idx, new)
+                self._sync_edit_panel(idx)
+        if not total:
+            self._set_status("没有可替换的匹配")
+            return 0
+        self.refresh_display(keep_scroll=True)
+        self._update_saved_chip()
+        self._refresh_replace_count()
+        self._set_status("已替换 %d 处（%d 条消息）· %d 条待保存（Ctrl+S 保存）"
+                         % (total, len(touched), len(self.edited)))
+        return total
+
     def toggle_toolbar(self, _event=None):
         """隐藏 / 展开顶部操作栏（Ctrl+T）。"""
         self._set_toolbar_visible(not getattr(self, "_toolbar_visible", True))
@@ -2510,7 +2674,8 @@ class ChatViewerApp:
         if self._toolbar_visible:
             self.btn_toolbar_show.place_forget()
             self.btn_toolbar_show.pack_forget()
-            anchor = self.infobar if getattr(self, "_infobar_visible", False) else self.body
+            anchor = (self.replace_bar if self.replace_bar.winfo_ismapped()
+                      else (self.infobar if getattr(self, "_infobar_visible", False) else self.body))
             self.toolbar.pack(side="top", fill="x", before=anchor)
             self.toolbar_line.pack(side="top", fill="x", before=anchor)
         else:

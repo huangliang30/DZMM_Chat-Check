@@ -1,9 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
+import importlib.util
+import os
+
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('C:/Users/18275/AppData/Local/Packages/PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0/LocalCache/local-packages/Python312/site-packages/tkinterdnd2', 'tkinterdnd2')]
+# tkinterdnd2 安装位置动态定位，本机与 CI 环境均可构建
+_dnd_spec = importlib.util.find_spec("tkinterdnd2")
+_dnd_dir = os.path.dirname(_dnd_spec.origin) if _dnd_spec else None
+
+datas = [(_dnd_dir, 'tkinterdnd2')] if _dnd_dir else []
 binaries = []
-hiddenimports = ['tkinter', 'tkinterdnd2', 'tkinterdnd2.tkdnd', 'tkinterdnd2.tkdnd_wrapper', 'tkinter.ttk']
+hiddenimports = ['tkinter', 'tkinterdnd2', 'tkinterdnd2.tkdnd', 'tkinter.ttk']
 tmp_ret = collect_all('tkinterdnd2')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 datas += [('good.ico', '.')]

@@ -1,0 +1,49 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pillow tkinterdnd2
+
+      - name: Build exe
+        run: pyinstaller AI_Chat_Viewer.spec --noconfirm
+
+      # 手动运行时只验证构建，产物上传为构建件供下载检查
+      - name: Upload build artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI_Chat_Check
+          path: dist/AI_Chat_Check.exe
+
+      # 推送 v* 标签时：自动创建发行版并附上 exe（已存在则覆盖资产）
+      - name: Create release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME --generate-notes --title $env:GITHUB_REF_NAME dist/AI_Chat_Check.exe
+          if ($LASTEXITCODE -ne 0) {
+            gh release upload $env:GITHUB_REF_NAME dist/AI_Chat_Check.exe --clobber
+          }

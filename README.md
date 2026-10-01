@@ -41,5 +41,10 @@
 ## 设置
 保存在 `%APPDATA%\AI_Chat_Viewer\settings.json`（主题、字号、侧栏、窗口大小、quote_highlight、quote_color、show_toolbar）。
 
+## 发布
+- 发新版只需打标签推送：`git tag v1.3 && git push origin v1.3` → GitHub Actions 自动在 Windows 环境打包，并在 Releases 页创建发行版、附上 `AI_Chat_Check.exe`
+- Actions 页的「Build & Release」支持手动运行（仅验证构建，产物在构建件里）
+- 本地打包：`python -m PyInstaller AI_Chat_Viewer.spec --noconfirm` 或运行 `build.bat`
+
 ## 备注
 - 界面图标 / 按钮设计规范与图标对照表见 `UI_ICONS.md`

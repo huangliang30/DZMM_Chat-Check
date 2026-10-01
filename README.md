@@ -1,4 +1,4 @@
-﻿# Chat-Check
+﻿# DZMM Chat-Check
 一个用于酒馆DZMM导出的聊天json文件查看器。
 
 ## 功能
@@ -20,7 +20,7 @@
 - 源码：`python chat_viewer.py [chat_export_xxx.json]`（Python 3.10+；可选依赖 tkinterdnd2 支持拖入文件）
 - 打包版：`dist/AI_Chat_Check.exe`（重建：`python -m PyInstaller AI_Chat_Viewer.spec --noconfirm`）
 - 软件名 AI Chat Check；窗口 / 任务栏 / exe 图标为 `good.ico`（源图 `good.png`）
-- 最新打包版下载：[Releases 页](https://github.com/huangliang30/Chat-Check/releases)（`AI_Chat_Check.exe` 单文件绿色版）
+- 最新打包版下载：[Releases 页](https://github.com/huangliang30/DZMM_Chat-Check/releases)（`AI_Chat_Check.exe` 单文件绿色版）
 
 ## 快捷键
 | 快捷键 | 功能 |
@@ -42,4 +42,4 @@
 保存在 `%APPDATA%\AI_Chat_Viewer\settings.json`（主题、字号、侧栏、窗口大小、quote_highlight、quote_color、show_toolbar）。
 
 ## 备注
-- `chat_viewer.py.bak` 为界面重构前的旧版备份。
+- 界面图标 / 按钮设计规范与图标对照表见 `UI_ICONS.md`

@@ -11,6 +11,7 @@ AI Chat Export Viewer - 酒馆(SillyTavern) 聊天记录查看器
 """
 
 import json
+import math
 import os
 import re
 import sys
@@ -277,9 +278,9 @@ ROLE_META = {
 DOT = "\u25cf"
 
 FILTERS = [
-    ("all", "全部"),
-    ("user", "user"),
-    ("assistant", "char"),
+    ("all", "全部", "list_all", "筛选：显示全部消息"),
+    ("user", "user", "person", "筛选：只看 user 的消息"),
+    ("assistant", "char", "bot", "筛选：只看 char 的消息"),
 ]
 
 
@@ -651,28 +652,383 @@ class Chip(RoundWidget):
                          font=self._font, fill=pal[self._fg_key], anchor="center")
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  简笔画矢量图标（24 单位视图框，2.2 单位圆头描边）
+# ══════════════════════════════════════════════════════════════════════════
+ICON_VIEW = 24.0
+ICON_STROKE = 2.1
+
+
+def _arc_pts(cx, cy, r, a0, a1, n=18):
+    """按 PIL 约定（0° 在 3 点钟方向，顺时针为正）采样弧线点列。"""
+    return [(cx + r * math.cos(math.radians(a0 + (a1 - a0) * i / n)),
+             cy + r * math.sin(math.radians(a0 + (a1 - a0) * i / n)))
+            for i in range(n + 1)]
+
+
+def _moon_pts():
+    """月牙多边形：大圆左弧 + 内切小圆左弧拼合。"""
+    outer = _arc_pts(11.0, 12.0, 8.0, 305, 55, 26)   # 从右上经左侧绕到右下
+    inner = _arc_pts(17.2, 12.0, 6.75, 103.8, 256.2, 22)
+    return outer + inner
+
+
+def _icon_arrow_head(ex, ey, dx, dy, size=3.4):
+    """在 (ex,ey) 沿 (dx,dy) 方向的实心箭头三角。"""
+    nx, ny = -dy, dx
+    return [(ex + dx * size, ey + dy * size),
+            (ex - dx * size * 0.55 + nx * size * 0.72,
+             ey - dy * size * 0.55 + ny * size * 0.72),
+            (ex - dx * size * 0.55 - nx * size * 0.72,
+             ey - dy * size * 0.55 - ny * size * 0.72)]
+
+
+def _icon_arrow(x1, y1, x2, y2):
+    """直线 + 箭头：("arrow", x1, y1, x2, y2)。"""
+    length = math.hypot(x2 - x1, y2 - y1) or 1.0
+    dx, dy = (x2 - x1) / length, (y2 - y1) / length
+    bx, by = x2 - dx * 3.4, y2 - dy * 3.4
+    return [("line", [(x1, y1), (bx, by)]),
+            ("poly", _icon_arrow_head(x2, y2, dx, dy), True)]
+
+
+ICONS = {
+    # 文档（打开 JSON 文件）
+    "open": [
+        ("line", [(7.5, 3.5), (14.2, 3.5), (18.5, 7.8), (18.5, 20.5), (7.5, 20.5), (7.5, 3.5)]),
+        ("line", [(14.2, 3.5), (14.2, 7.8), (18.5, 7.8)]),
+        ("line", [(10.2, 12.2), (15.8, 12.2)]),
+        ("line", [(10.2, 15.8), (15.8, 15.8)]),
+    ],
+    # 文件夹
+    "folder": [
+        ("line", [(3, 18.5), (3, 6.5), (9, 6.5), (11, 8.7), (21, 8.7), (21, 18.5), (3, 18.5)]),
+    ],
+    # 复制：前后两页
+    "copy": [
+        ("rect", 9, 9, 11, 11, 2),
+        ("line", [(14.5, 5), (6, 5), (6, 14.5)]),
+    ],
+    # 铅笔（编辑模式）
+    "pencil": [
+        ("line", [(15, 4.5), (19.5, 9), (9.5, 19.2), (4.8, 19.2), (4.8, 14.5), (15, 4.5)]),
+        ("line", [(12.8, 6.7), (17.3, 11.2)]),
+    ],
+    # 软盘（保存）
+    "save": [
+        ("line", [(4.5, 4.5), (16.5, 4.5), (19.5, 7.5), (19.5, 19.5), (4.5, 19.5), (4.5, 4.5)]),
+        ("line", [(8.5, 4.5), (8.5, 10), (14.5, 10), (14.5, 4.5)]),
+        ("rect", 8, 13.5, 8, 6, 1),
+    ],
+    # 荧光笔 + 下划线（引号高亮）
+    "marker": [
+        ("line", [(14, 3.8), (19.2, 9), (11.2, 17), (6.7, 17), (6.7, 12.5), (14, 3.8)]),
+        ("line", [(4.5, 20.8), (19.5, 20.8)]),
+    ],
+    # 托盘 + 下箭头（导出）
+    "export": [
+        ("line", [(4, 14), (4, 19.5), (20, 19.5), (20, 14)]),
+    ] + _icon_arrow(12, 4, 12, 14.2),
+    # 双向箭头（替换）
+    "swap": [
+        ("line", [(4.5, 8.5), (17.5, 8.5)]),
+        ("poly", _icon_arrow_head(17.5, 8.5, 1, 0), True),
+        ("line", [(19.5, 15.5), (6.5, 15.5)]),
+        ("poly", _icon_arrow_head(6.5, 15.5, -1, 0), True),
+    ],
+    # 双排对开箭头（全部替换）
+    "swap_all": [
+        ("line", [(5, 6.5), (16, 6.5)]),
+        ("poly", _icon_arrow_head(16, 6.5, 1, 0), True),
+        ("line", [(19, 17.5), (8, 17.5)]),
+        ("poly", _icon_arrow_head(8, 17.5, -1, 0), True),
+    ],
+    # 上 / 下双箭头（收起 / 展开操作栏）
+    "chevron_up": [("line", [(6.5, 14.8), (12, 9.2), (17.5, 14.8)])],
+    "chevron_down": [("line", [(6.5, 9.2), (12, 14.8), (17.5, 9.2)])],
+    # 左侧栏面板（消息列表）
+    "panel": [
+        ("rect", 3.5, 5, 17, 14, 2.5),
+        ("line", [(9.5, 5), (9.5, 19)]),
+    ],
+    # 月亮 / 太阳（主题切换）
+    "moon": [("poly", _moon_pts(), True)],
+    "sun": [
+        ("circle", 12, 12, 3.7),
+        ("line", [(12, 2.8), (12, 5.2)]),
+        ("line", [(12, 18.8), (12, 21.2)]),
+        ("line", [(2.8, 12), (5.2, 12)]),
+        ("line", [(18.8, 12), (21.2, 12)]),
+        ("line", [(5.5, 5.5), (7.2, 7.2)]),
+        ("line", [(16.8, 16.8), (18.5, 18.5)]),
+        ("line", [(5.5, 18.5), (7.2, 16.8)]),
+        ("line", [(16.8, 7.2), (18.5, 5.5)]),
+    ],
+    # 放大镜 + 加减号（字号）
+    "zoom_in": [
+        ("circle", 10.5, 10.5, 5.8),
+        ("line", [(14.8, 14.8), (20, 20)]),
+        ("line", [(7.9, 10.5), (13.1, 10.5)]),
+        ("line", [(10.5, 7.9), (10.5, 13.1)]),
+    ],
+    "zoom_out": [
+        ("circle", 10.5, 10.5, 5.8),
+        ("line", [(14.8, 14.8), (20, 20)]),
+        ("line", [(7.9, 10.5), (13.1, 10.5)]),
+    ],
+    # 左箭头（返回文件夹）
+    "back": _icon_arrow(19, 12, 5.5, 12) + [
+        ("line", [(10.4, 7.2), (5.5, 12), (10.4, 16.8)]),
+    ],
+    # 环形箭头（重新扫描）
+    "refresh": [
+        ("arc", 12, 12, 7.2, 45, 270),
+        ("poly", _icon_arrow_head(16.95, 7.05, 0.707, 0.707, size=4.4), True),
+    ],
+    # 逆时针箭头（还原）
+    "undo": [
+        ("arc", 12, 12.5, 7, 180, 270),
+        ("poly", _icon_arrow_head(12, 19.5, -1, 0, size=4.2), True),
+    ],
+    # 对勾（应用修改）
+    "check": [("line", [(5, 12.6), (10, 17.6), (19, 6.6)])],
+    # 叉号（关闭）
+    "close": [
+        ("line", [(6.5, 6.5), (17.5, 17.5)]),
+        ("line", [(17.5, 6.5), (6.5, 17.5)]),
+    ],
+    # 三横线（筛选：全部）
+    "list_all": [
+        ("line", [(4.5, 6.5), (19.5, 6.5)]),
+        ("line", [(4.5, 12), (19.5, 12)]),
+        ("line", [(4.5, 17.5), (19.5, 17.5)]),
+    ],
+    # 人像（筛选：user）
+    "person": [
+        ("circle", 12, 8, 3.6),
+        ("arc", 12, 19.5, 6.2, 180, 180),
+    ],
+    # 机器人（筛选：char）
+    "bot": [
+        ("rect", 5.5, 8.5, 13, 10, 2.5),
+        ("dot", 9.6, 13.5, 1.35),
+        ("dot", 14.4, 13.5, 1.35),
+        ("line", [(12, 4.6), (12, 8.5)]),
+        ("dot", 12, 4.2, 1.15),
+    ],
+}
+
+_ICON_CACHE = {}
+
+
+def _render_icon_ops(draw, ops, color, k, stroke_w):
+    """把图标 op 列表按倍率 k 画到 PIL ImageDraw 上。"""
+    w = max(1, int(round(stroke_w)))
+    for op in ops:
+        kind = op[0]
+        if kind == "line":
+            pts = [(x * k, y * k) for x, y in op[1]]
+            draw.line(pts, fill=color, width=w, joint="curve")
+            cap = stroke_w / 2.0
+            for (x, y) in (op[1][0], op[1][-1]):
+                px, py = x * k, y * k
+                draw.ellipse([px - cap, py - cap, px + cap, py + cap], fill=color)
+        elif kind == "circle":
+            cx, cy, r = op[1] * k, op[2] * k, op[3] * k
+            draw.ellipse([cx - r, cy - r, cx + r, cy + r],
+                         outline=color, width=w)
+        elif kind == "dot":
+            cx, cy, r = op[1] * k, op[2] * k, op[3] * k
+            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=color)
+        elif kind == "rect":
+            x, y, ww, hh, rr = [v * k for v in op[1:6]]
+            draw.rounded_rectangle([x, y, x + ww, y + hh], radius=rr,
+                                   outline=color, width=w)
+        elif kind == "poly":
+            pts = [(x * k, y * k) for x, y in op[1]]
+            if op[2]:
+                draw.polygon(pts, fill=color)
+            else:
+                draw.line(pts, fill=color, width=w, joint="curve")
+        elif kind == "arc":
+            cx, cy, r, a0, a1 = op[1], op[2], op[3], op[4], op[5]
+            k1 = r * k
+            draw.arc([cx * k - k1, cy * k - k1, cx * k + k1, cy * k + k1],
+                     start=a0, end=a0 + a1, fill=color, width=w)
+
+
+def icon_photo(master, name, color, size):
+    """PIL 超采样渲染图标为透明底 PhotoImage，按参数缓存。"""
+    if not HAS_PIL:
+        return None
+    size = max(6, int(round(size)))
+    key = (name, color, size)
+    hit = _ICON_CACHE.get(key)
+    if hit is not None:
+        return hit
+    ss = 4
+    px = size * ss
+    k = px / ICON_VIEW
+    img = _PILImage.new("RGBA", (px + 8, px + 8), (0, 0, 0, 0))
+    d = _PILDraw.Draw(img)
+    _render_icon_ops(d, ICONS.get(name, []), color, k, ICON_STROKE * k)
+    img = img.resize((size + 2, size + 2), _PILImage.LANCZOS)
+    photo = _PILImageTk.PhotoImage(img, master=master)
+    _ICON_CACHE[key] = photo
+    return photo
+
+
+def draw_icon_canvas(canvas, name, color, cx, cy, size):
+    """无 PIL 时的降级路径：tk canvas 原语直接绘制图标。"""
+    k = size / ICON_VIEW
+    w = max(1, int(round(ICON_STROKE * k)))
+    for op in ICONS.get(name, []):
+        kind = op[0]
+        if kind == "line":
+            pts = [coord for x, y in op[1] for coord in (cx + x * k, cy + y * k)]
+            canvas.create_line(pts, fill=color, width=w, capstyle="round",
+                               joinstyle="round")
+        elif kind == "circle":
+            r = op[3] * k
+            canvas.create_oval(cx + op[1] * k - r, cy + op[2] * k - r,
+                               cx + op[1] * k + r, cy + op[2] * k + r,
+                               outline=color, width=w)
+        elif kind == "dot":
+            r = op[3] * k
+            canvas.create_oval(cx + op[1] * k - r, cy + op[2] * k - r,
+                               cx + op[1] * k + r, cy + op[2] * k + r,
+                               fill=color, outline="")
+        elif kind == "rect":
+            x, y, ww, hh = op[1] * k, op[2] * k, op[3] * k, op[4] * k
+            rounded_rect(canvas, cx + x, cy + y, cx + x + ww, cy + y + hh,
+                         max(2, op[5] * k), outline=color, width=w)
+        elif kind == "poly":
+            pts = [coord for x, y in op[1] for coord in (cx + x * k, cy + y * k)]
+            if op[2]:
+                canvas.create_polygon(pts, fill=color, outline=color)
+            else:
+                canvas.create_line(pts, fill=color, width=w,
+                                   capstyle="round", joinstyle="round")
+        elif kind == "arc":
+            r = op[3] * k
+            canvas.create_arc(cx + op[1] * k - r, cy + op[2] * k - r,
+                              cx + op[1] * k + r, cy + op[2] * k + r,
+                              start=op[4], extent=op[5], style="arc",
+                              outline=color, width=w)
+
+
+class Tooltip:
+    """主题化悬停提示：悬停约半秒后在按钮下方浮现功能说明。"""
+
+    DELAY = 520
+
+    def __init__(self, widget, theme, text):
+        self._widget = widget
+        self._theme = theme
+        self._text = text
+        self._job = None
+        self._tip = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+        widget.bind("<Destroy>", self._hide, add="+")
+
+    def _schedule(self, _event=None):
+        self._cancel()
+        self._job = self._widget.after(self.DELAY, self._show)
+
+    def _cancel(self):
+        if self._job:
+            try:
+                self._widget.after_cancel(self._job)
+            except Exception:
+                pass
+            self._job = None
+
+    def _hide(self, _event=None):
+        self._cancel()
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except Exception:
+                pass
+            self._tip = None
+
+    def _show(self):
+        widget = self._widget
+        self._job = None
+        try:
+            if not widget.winfo_exists() or not widget.winfo_ismapped():
+                return
+        except Exception:
+            return
+        self._hide()
+        pal = self._theme.pal
+        tip = tk.Toplevel(widget)
+        tip.wm_overrideredirect(True)
+        try:
+            tip.attributes("-topmost", True)
+        except Exception:
+            pass
+        inner = tk.Label(
+            tip, text=self._text, justify="left", padx=S(9), pady=S(4),
+            bg=pal["surface_3"], fg=pal["text"], bd=0,
+            font=(FONT_FAMILIES[0], 9),
+        )
+        inner.pack(expand=True, padx=1, pady=1, fill="both")
+        tip.configure(bg=pal["border_strong"])
+        self._tip = tip
+
+        def place():
+            if self._tip is not tip:
+                return
+            try:
+                tip.update_idletasks()
+                w = tip.winfo_reqwidth()
+                h = tip.winfo_reqheight()
+                x = widget.winfo_rootx() + (widget.winfo_width() - w) // 2
+                y = widget.winfo_rooty() + widget.winfo_height() + S(5)
+                screen_w = widget.winfo_screenwidth()
+                screen_h = widget.winfo_screenheight()
+                x = max(S(4), min(x, screen_w - w - S(4)))
+                if y + h > screen_h - S(8):
+                    y = widget.winfo_rooty() - h - S(5)
+                tip.wm_geometry("+%d+%d" % (x, y))
+            except Exception:
+                pass
+        place()
+
+
 class FlatButton(RoundWidget):
-    """圆角按钮，带 hover / 按下 / 选中 / 禁用 四种状态。"""
+    """圆角按钮，带 hover / 按下 / 选中 / 禁用 四种状态。
+
+    icon 模式：不渲染文字，改为居中绘制简笔画图标（配合 Tooltip 说明功能）。
+    """
 
     def __init__(self, master, theme, text="", command=None, variant="default",
-                 font=None, padx=None, pady=None, **kw):
+                 font=None, padx=None, pady=None, icon=None, icon_size=None,
+                 tooltip=None, **kw):
         super().__init__(master, theme, **kw)
         self._variant = variant
         self._command = command
         self._font = font
-        self._padx = S(14) if padx is None else padx
-        self._pady = S(6) if pady is None else pady
+        self._icon = icon
+        self._icon_size = icon_size if icon_size is not None else S(17)
+        if padx is None:
+            padx = S(9) if icon else S(14)
+        self._padx = padx
+        self._pady = pady if pady is not None else (S(9) if icon else S(6))
         self._text = text
         self._on = False
         self._enabled = True
         self._hover = False
         self._press = False
-        self._scale = 1.0
-        self._anim_jobs = []
         self.bind("<Enter>", self._on_enter)
         self.bind("<Leave>", self._on_leave)
         self.bind("<ButtonPress-1>", self._on_down)
         self.bind("<ButtonRelease-1>", self._on_up)
+        if tooltip:
+            Tooltip(self, theme, tooltip)
         theme.subscribe(self._guarded_paint)
 
     # -- 状态 API --
@@ -688,9 +1044,13 @@ class FlatButton(RoundWidget):
         self._enabled = bool(enabled)
         self._paint(self._theme.pal)
 
+    def set_icon(self, icon):
+        self._icon = icon
+        self._paint(self._theme.pal)
+
     def configure(self, cnf=None, **kw):
         repaint = False
-        for key in ("text", "command", "font"):
+        for key in ("text", "command", "font", "icon"):
             if key in kw:
                 setattr(self, "_" + key, kw.pop(key))
                 repaint = True
@@ -710,47 +1070,23 @@ class FlatButton(RoundWidget):
 
     def _on_leave(self, _event=None):
         self._hover = False
-        if self._press:
-            self._press = False
-            self._spring_back()
-        else:
-            self._paint(self._theme.pal)
+        self._press = False
+        self._paint(self._theme.pal)
 
     def _on_down(self, _event=None):
         if not self._enabled:
             return
         self._press = True
-        self._stop_anim()
-        self._set_scale(0.93)
+        self._paint(self._theme.pal)
 
     def _on_up(self, event=None):
         if not self._press:
             return
         self._press = False
         inside = event is None or (0 <= event.x <= self._rw and 0 <= event.y <= self._rh)
-        self._spring_back()
+        self._paint(self._theme.pal)
         if self._enabled and inside and self._command:
             self._command()
-
-    # -- 弹性动画 --
-    def _set_scale(self, scale):
-        self._scale = scale
-        self._paint(self._theme.pal)
-
-    def _stop_anim(self):
-        for job in self._anim_jobs:
-            try:
-                self.after_cancel(job)
-            except Exception:
-                pass
-        self._anim_jobs = []
-
-    def _spring_back(self):
-        """松手回弹：缩小 → 过冲放大 → 回稳，制造弹性手感。"""
-        self._stop_anim()
-        for ms, scale in ((0, 0.93), (70, 1.06), (150, 0.985), (220, 1.0)):
-            self._anim_jobs.append(
-                self.after(ms, lambda s=scale: self._set_scale(s)))
 
     # -- 配色 --
     def _states(self, pal):
@@ -780,46 +1116,37 @@ class FlatButton(RoundWidget):
     def _paint(self, pal):
         base, hover, press = self._states(pal)
         fill, fg = press if self._press else (hover if (self._hover and self._enabled) else base)
-        fobj = self._font_obj(self._font)
-        width = fobj.measure(self._text or "") + 2 * self._padx
-        height = max(S(26), fobj.metrics("linespace") + 2 * self._pady)
+        if self._icon:
+            isize = self._icon_size
+            width = isize + 2 * self._padx
+            height = isize + 2 * self._pady
+        else:
+            fobj = self._font_obj(self._font)
+            width = fobj.measure(self._text or "") + 2 * self._padx
+            height = max(S(26), fobj.metrics("linespace") + 2 * self._pady)
         self.delete("all")
         super().configure(bg=pal[self._on_key])
         if fill and HAS_PIL:
             self._resize(width + 2 * AA_MARGIN, height + 2 * AA_MARGIN)
-            lifted = self._press or (self._hover and self._enabled)
-            lift = 1 if self._press else (3 if self._hover and self._enabled else 2)
-            bw, bh = width * self._scale, height * self._scale
-            photo = rounded_photo(self, bw, bh, bh / 2.0, fill=fill,
-                                  outline=_darker(fill, 0.22) if lifted else None,
-                                  gloss=_lighter(fill, 0.14) if lifted else None,
-                                  shadow=_hex_mix(pal[self._on_key], "#000000", 0.25) if lifted else None,
-                                  shadow_lift=lift)
+            photo = rounded_photo(self, width, height, height / 2.0, fill=fill)
             self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
                               anchor="center")
         else:
             self._resize(width, height)
             if fill:
-                w, h = self._rw, self._rh
-                sc = self._scale
-                iw, ih = w * sc, h * sc
-                x1 = (w - iw) / 2.0
-                y1 = (h - ih) / 2.0
-                x2, y2 = x1 + iw, y1 + ih
-                radius = max(2.0, ih / 2.0)
-                lifted = self._press or (self._hover and self._enabled)
-                lift = S(1) if self._press else (S(3) if self._hover and self._enabled else S(2))
-                if lifted:
-                    rounded_rect(self, x1 + S(1), y1 + lift, x2 - S(1), y2 + lift, radius,
-                                 fill=_darker(fill, 0.3))
-                rounded_rect(self, x1, y1, x2, y2, radius, fill=fill,
-                             outline=_darker(fill, 0.22) if lifted else "",
-                             width=S(1) if lifted else 0)
-                if lifted:
-                    rounded_rect(self, x1 + S(2), y1 + S(1.5), x2 - S(2), y1 + ih * 0.52,
-                                 max(2.0, radius * 0.6), fill=_lighter(fill, 0.14))
-        self.create_text(self._rw / 2.0, self._rh / 2.0, text=self._text or "",
-                         font=self._font, fill=fg, anchor="center")
+                self._round(fill)
+        if self._icon:
+            color = fg if fg else pal["text"]
+            photo = icon_photo(self, self._icon, color, isize)
+            if photo is not None:
+                self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
+                                  anchor="center")
+            else:
+                draw_icon_canvas(self, self._icon, color,
+                                 self._rw / 2.0, self._rh / 2.0, isize)
+        else:
+            self.create_text(self._rw / 2.0, self._rh / 2.0, text=self._text or "",
+                             font=self._font, fill=fg, anchor="center")
         super().configure(cursor="hand2" if self._enabled else "arrow")
 
 
@@ -892,15 +1219,16 @@ class SearchBox(RoundWidget):
                               relief="flat", bd=0, highlightthickness=0,
                               width=width, insertwidth=S(1))
         self.entry.pack(side="left", fill="x", expand=True, pady=S(4))
-        self.clear_btn = FlatButton(self.inner, theme, text="\u2715", variant="ghost",
-                                    font=fonts.small, padx=S(6), pady=0,
+        self.clear_btn = FlatButton(self.inner, theme, icon="close",
+                                    icon_size=S(11), variant="ghost",
+                                    padx=S(5), pady=S(3),
                                     on_key="surface_2", command=self.clear)
         self._inset = S(10)
 
         uif = self._font_obj(fonts.ui)
         smallf = self._font_obj(fonts.small)
         inner_w = (smallf.measure("\U0001f50d") + S(5) + uif.measure("0" * width)
-                   + smallf.measure("\u2715") + 2 * S(6) + S(12))
+                   + S(11) + 2 * S(5) + S(12))
         inner_h = uif.metrics("linespace") + 2 * S(4)
         self._resize(inner_w + 2 * self._inset + 2 * AA_MARGIN,
                      inner_h + 2 * AA_MARGIN)
@@ -1031,16 +1359,17 @@ class SearchBox(RoundWidget):
 
 
 class Segmented(TFrame):
-    """分段筛选控件。"""
+    """分段筛选控件（图标化：图标即语义，悬停显示说明）。"""
 
     def __init__(self, master, theme, fonts, items, value="all", command=None):
         super().__init__(master, theme, bg_key="surface")
         self.value = value
         self._command = command
         self.buttons = {}
-        for key, label in items:
-            button = FlatButton(self, theme, text=label, variant="segment",
-                                font=fonts.small_bold, padx=S(10), pady=S(2),
+        for key, label, icon, tip in items:
+            button = FlatButton(self, theme, icon=icon, icon_size=S(14),
+                                variant="segment", padx=S(8), pady=S(3),
+                                tooltip=tip,
                                 command=lambda k=key: self.select(k))
             button.pack(side="left", padx=S(2), pady=S(2))
             self.buttons[key] = button
@@ -1177,8 +1506,10 @@ class FolderPanel(TFrame):
         self.filter_box.pack(side="left")
         self.filter_box.entry.bind("<Up>", self._on_arrow)
         self.filter_box.entry.bind("<Down>", self._on_arrow)
-        self.btn_rescan = FlatButton(bar, self.theme, text="重新扫描", variant="ghost",
-                                     font=self.fonts.ui, command=self.rescan)
+        self.btn_rescan = FlatButton(bar, self.theme, icon="refresh",
+                                     variant="ghost", icon_size=S(16),
+                                     tooltip="重新扫描文件夹",
+                                     command=self.rescan)
         self.btn_rescan.pack(side="right")
 
         holder = TFrame(self, self.theme, bg_key="bg")
@@ -1392,9 +1723,10 @@ class ChatViewerApp:
         self._build_infobar()
         self._build_statusbar()
         self._build_body()
-        self.btn_toolbar_show = FlatButton(self.root, self.theme, text="展开",
-                                           variant="ghost", font=self.fonts.small,
-                                           padx=S(9), pady=S(2),
+        self.btn_toolbar_show = FlatButton(self.root, self.theme, icon="chevron_down",
+                                           variant="ghost", icon_size=S(15),
+                                           padx=S(7), pady=S(7),
+                                           tooltip="展开操作栏（Ctrl+T）",
                                            command=self.toggle_toolbar)
         self.theme.subscribe(self._apply_text_theme)
         self.theme.subscribe(self._apply_side_theme)
@@ -1472,51 +1804,65 @@ class ChatViewerApp:
 
         self._vline(bar).pack(side="left", fill="y", padx=S(8), pady=S(14))
 
-        self.btn_open = FlatButton(bar, self.theme, text="打开", variant="primary",
-                                   font=self.fonts.ui, command=self.open_file)
+        self.btn_open = FlatButton(bar, self.theme, icon="open", variant="primary",
+                                   tooltip="打开 JSON 文件（Ctrl+O）",
+                                   command=self.open_file)
         self.btn_open.pack(side="left", padx=(S(2), S(3)), pady=S(9))
-        self.btn_folder = FlatButton(bar, self.theme, text="文件夹", variant="ghost",
-                                     font=self.fonts.ui, command=self.open_folder)
+        self.btn_folder = FlatButton(bar, self.theme, icon="folder", variant="ghost",
+                                     tooltip="文件夹选片（Ctrl+Shift+O）",
+                                     command=self.open_folder)
         self.btn_folder.pack(side="left", padx=S(3), pady=S(9))
-        self.btn_copy = FlatButton(bar, self.theme, text="复制", variant="ghost",
-                                   font=self.fonts.ui, command=self.copy_selected)
+        self.btn_copy = FlatButton(bar, self.theme, icon="copy", variant="ghost",
+                                   tooltip="复制选中内容（Ctrl+C）",
+                                   command=self.copy_selected)
         self.btn_copy.pack(side="left", padx=S(3), pady=S(9))
-        self.btn_edit = FlatButton(bar, self.theme, text="编辑模式", variant="ghost",
-                                   font=self.fonts.ui, command=self.toggle_edit_mode)
+        self.btn_edit = FlatButton(bar, self.theme, icon="pencil", variant="ghost",
+                                   tooltip="编辑模式（Ctrl+E）",
+                                   command=self.toggle_edit_mode)
         self.btn_edit.pack(side="left", padx=S(3), pady=S(9))
-        self.btn_save = FlatButton(bar, self.theme, text="保存", variant="default",
-                                   font=self.fonts.ui, command=self.save_file)
+        self.btn_save = FlatButton(bar, self.theme, icon="save", variant="default",
+                                   tooltip="保存修改（Ctrl+S）",
+                                   command=self.save_file)
         self.btn_save.pack(side="left", padx=S(3), pady=S(9))
-        self.btn_quote = FlatButton(bar, self.theme, text="高亮", variant="ghost",
-                                    font=self.fonts.ui, command=self.toggle_quote_highlight)
+        self.btn_quote = FlatButton(bar, self.theme, icon="marker", variant="ghost",
+                                    tooltip="引号高亮开关（Ctrl+H）",
+                                    command=self.toggle_quote_highlight)
         self.btn_quote.pack(side="left", padx=(S(3), S(1)), pady=S(9))
         self.btn_quote_color = ColorSwatch(bar, self.theme, color=self._quote_color(),
                                            command=self.choose_quote_color)
         self.btn_quote_color.pack(side="left", padx=S(1), pady=S(9))
         self.btn_quote_color.bind("<Button-3>", lambda e: self.set_quote_color(""))
-        self.btn_export = FlatButton(bar, self.theme, text="导出", variant="ghost",
-                                     font=self.fonts.ui, command=self.export_txt)
+        Tooltip(self.btn_quote_color, self.theme, "高亮颜色 · 右键恢复默认")
+        self.btn_export = FlatButton(bar, self.theme, icon="export", variant="ghost",
+                                     tooltip="导出为 TXT",
+                                     command=self.export_txt)
         self.btn_export.pack(side="left", padx=S(3), pady=S(9))
-        self.btn_replace = FlatButton(bar, self.theme, text="替换", variant="ghost",
-                                      font=self.fonts.ui, command=self.toggle_replace)
+        self.btn_replace = FlatButton(bar, self.theme, icon="swap", variant="ghost",
+                                      tooltip="查找替换（Ctrl+R）",
+                                      command=self.toggle_replace)
         self.btn_replace.pack(side="left", padx=(S(3), S(1)), pady=S(9))
 
         # 右侧工具（先 pack 的在最右）
-        self.btn_collapse = FlatButton(bar, self.theme, text="收起", variant="ghost",
-                                       font=self.fonts.ui, command=self.toggle_toolbar)
+        self.btn_collapse = FlatButton(bar, self.theme, icon="chevron_up",
+                                       variant="ghost", tooltip="收起操作栏（Ctrl+T）",
+                                       command=self.toggle_toolbar)
         self.btn_collapse.pack(side="right", padx=(S(4), S(2)), pady=S(9))
-        self.btn_sidebar = FlatButton(bar, self.theme, text="列表", variant="ghost",
-                                      font=self.fonts.ui, command=self.toggle_sidebar)
+        self.btn_sidebar = FlatButton(bar, self.theme, icon="panel", variant="ghost",
+                                      tooltip="显示 / 隐藏消息列表",
+                                      command=self.toggle_sidebar)
         self.btn_sidebar.pack(side="right", padx=(S(4), S(12)), pady=S(9))
-        self.btn_theme = FlatButton(bar, self.theme, text="深色", variant="ghost",
-                                    font=self.fonts.ui, command=self.toggle_theme)
+        self.btn_theme = FlatButton(bar, self.theme, icon="moon", variant="ghost",
+                                    tooltip="切换深色 / 浅色主题",
+                                    command=self.toggle_theme)
         self.btn_theme.pack(side="right", padx=S(3), pady=S(9))
-        self.btn_font_up = FlatButton(bar, self.theme, text="A+", variant="ghost",
-                                      font=self.fonts.ui, padx=S(8),
+        self.btn_font_up = FlatButton(bar, self.theme, icon="zoom_in",
+                                      variant="ghost", icon_size=S(16),
+                                      tooltip="增大字号（Ctrl + 加号）",
                                       command=lambda: self.change_font_size(1))
         self.btn_font_up.pack(side="right", padx=S(3), pady=S(9))
-        self.btn_font_down = FlatButton(bar, self.theme, text="A\u2212", variant="ghost",
-                                        font=self.fonts.ui, padx=S(8),
+        self.btn_font_down = FlatButton(bar, self.theme, icon="zoom_out",
+                                        variant="ghost", icon_size=S(16),
+                                        tooltip="减小字号（Ctrl + 减号）",
                                         command=lambda: self.change_font_size(-1))
         self.btn_font_down.pack(side="right", padx=S(3), pady=S(9))
         self._vline(bar).pack(side="right", fill="y", padx=S(8), pady=S(14))
@@ -1548,9 +1894,10 @@ class ChatViewerApp:
         self.info_title = TLabel(inner, self.theme, text="未打开文件", bg_key="surface",
                                  fg_key="text", font=self.fonts.title, anchor="w")
         self.info_title.pack(side="left")
-        self.btn_back_folder = FlatButton(inner, self.theme, text="‹ 返回文件夹",
-                                          variant="ghost", font=self.fonts.small,
-                                          padx=S(10), pady=S(2),
+        self.btn_back_folder = FlatButton(inner, self.theme, icon="back",
+                                          variant="ghost", icon_size=S(15),
+                                          padx=S(7), pady=S(7),
+                                          tooltip="返回文件夹列表",
                                           command=self._back_to_folder)
 
         self.info_model = Chip(inner, self.theme, text="", bg_key="surface_3",
@@ -1674,15 +2021,18 @@ class ChatViewerApp:
 
         pick_row = TFrame(box, self.theme, bg_key="bg")
         pick_row.pack(pady=(S(22), 0))
-        self.empty_open = FlatButton(pick_row, self.theme, text="选择 JSON 文件", variant="primary",
-                                     font=self.fonts.ui_bold, padx=S(18), pady=S(7),
-                                     on_key="bg", command=self.open_file)
-        self.empty_open.pack(side="left", padx=(0, S(8)))
-        self.empty_folder = FlatButton(pick_row, self.theme, text="选择文件夹",
-                                       variant="primary", font=self.fonts.ui_bold,
-                                       padx=S(18), pady=S(7), on_key="bg",
-                                       command=self.open_folder)
-        self.empty_folder.pack(side="left")
+        for name, icon, caption, command in (
+                ("open", "open", "选择 JSON 文件", self.open_file),
+                ("folder", "folder", "选择文件夹", self.open_folder)):
+            cell = TFrame(pick_row, self.theme, bg_key="bg")
+            cell.pack(side="left", padx=(0, S(8)))
+            button = FlatButton(cell, self.theme, icon=icon, variant="primary",
+                                icon_size=S(22), padx=S(15), pady=S(15),
+                                on_key="bg", tooltip=caption, command=command)
+            button.pack()
+            TLabel(cell, self.theme, text=caption, bg_key="bg", fg_key="text_2",
+                   font=self.fonts.small).pack(pady=(S(5), 0))
+            setattr(self, "empty_" + name, button)
 
     def _draw_art(self, pal):
         canvas = self.art
@@ -1746,8 +2096,10 @@ class ChatViewerApp:
         head.pack(side="top", fill="x")
         TLabel(head, self.theme, text="编辑消息", bg_key="surface", fg_key="text",
                font=self.fonts.section).pack(side="left")
-        self.btn_edit_close = FlatButton(head, self.theme, text="\u2715", variant="ghost",
-                                         font=self.fonts.small, padx=S(7), pady=S(1),
+        self.btn_edit_close = FlatButton(head, self.theme, icon="close",
+                                         variant="ghost", icon_size=S(14),
+                                         padx=S(6), pady=S(6),
+                                         tooltip="关闭编辑面板（Esc）",
                                          command=self._close_edit_panel)
         self.btn_edit_close.pack(side="right")
 
@@ -1766,14 +2118,18 @@ class ChatViewerApp:
         self.edit_count = TLabel(foot, self.theme, text="", bg_key="surface",
                                  fg_key="text_3", font=self.fonts.tiny)
         self.edit_count.pack(side="left")
-        self.btn_cancel = FlatButton(foot, self.theme, text="取消", variant="ghost",
-                                     font=self.fonts.ui, command=self._cancel_edit)
+        self.btn_cancel = FlatButton(foot, self.theme, icon="close", variant="ghost",
+                                     tooltip="取消编辑",
+                                     command=self._cancel_edit)
         self.btn_cancel.pack(side="right")
-        self.btn_revert = FlatButton(foot, self.theme, text="还原", variant="ghost",
-                                     font=self.fonts.ui, command=self._revert_edit)
+        self.btn_revert = FlatButton(foot, self.theme, icon="undo", variant="ghost",
+                                     tooltip="还原为原始内容",
+                                     command=self._revert_edit)
         self.btn_revert.pack(side="right", padx=(0, S(6)))
-        self.btn_apply = FlatButton(foot, self.theme, text="应用修改", variant="primary",
-                                    font=self.fonts.ui_bold, command=self._apply_edit)
+        self.btn_apply = FlatButton(foot, self.theme, icon="check", variant="primary",
+                                    icon_size=S(18),
+                                    tooltip="应用修改（Ctrl+Enter）",
+                                    command=self._apply_edit)
         self.btn_apply.pack(side="right", padx=(0, S(6)))
 
         self.edit_border = TFrame(inner, self.theme, bg_key="border_strong")
@@ -2758,7 +3114,7 @@ class ChatViewerApp:
         if not self.messages:
             return
         self.refresh_display()
-        label = dict(FILTERS).get(key, key)
+        label = dict(FILTERS).get(key, ("", key))[1]
         self._set_status("筛选：%s" % label)
 
     def _apply_search_highlights(self):
@@ -2839,17 +3195,23 @@ class ChatViewerApp:
                                       highlightthickness=0, width=26, insertwidth=S(1))
         self.replace_entry.pack(side="left")
         self.theme.subscribe(self._paint_replace_entry)
-        self.btn_repl_one = FlatButton(inner, self.theme, text="替换", variant="ghost",
-                                       font=self.fonts.ui, command=self.replace_current)
+        self.btn_repl_one = FlatButton(inner, self.theme, icon="swap", variant="ghost",
+                                       icon_size=S(16),
+                                       tooltip="替换当前匹配（回车）",
+                                       command=self.replace_current)
         self.btn_repl_one.pack(side="left", padx=(S(10), S(3)))
-        self.btn_repl_all = FlatButton(inner, self.theme, text="全部替换", variant="ghost",
-                                       font=self.fonts.ui, command=self.replace_all)
+        self.btn_repl_all = FlatButton(inner, self.theme, icon="swap_all",
+                                       variant="ghost", icon_size=S(16),
+                                       tooltip="全部替换",
+                                       command=self.replace_all)
         self.btn_repl_all.pack(side="left", padx=S(3))
         self.repl_count = TLabel(inner, self.theme, text="", bg_key="surface",
                                  fg_key="text_3", font=self.fonts.small)
         self.repl_count.pack(side="left", padx=(S(10), 0))
-        self.btn_repl_close = FlatButton(inner, self.theme, text="\u2715", variant="ghost",
-                                         font=self.fonts.small, padx=S(8),
+        self.btn_repl_close = FlatButton(inner, self.theme, icon="close",
+                                         variant="ghost", icon_size=S(14),
+                                         padx=S(6), pady=S(6),
+                                         tooltip="关闭替换条（Esc）",
                                          command=self.toggle_replace)
         self.btn_repl_close.pack(side="right", padx=(S(8), S(14)))
         self.replace_entry.bind("<Return>", lambda e: self.replace_current())
@@ -3025,7 +3387,7 @@ class ChatViewerApp:
         self._set_status("已切换到%s主题" % ("深色" if name == "dark" else "浅色"))
 
     def _refresh_theme_button(self):
-        self.btn_theme.configure(text="深色" if self.theme.name == "light" else "浅色")
+        self.btn_theme.set_icon("moon" if self.theme.name == "light" else "sun")
 
     def _top_hwnd(self):
         """Tk 子窗口句柄不是顶层 HWND，标题栏属性必须设在 wm frame 上。"""

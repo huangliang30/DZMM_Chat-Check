@@ -1091,6 +1091,9 @@ class FlatButton(RoundWidget):
     # -- 配色 --
     def _states(self, pal):
         variant = self._variant
+        # 无底色变体的悬停 / 按下反馈：在所在背景上叠加极淡的字色晕染，保持与背景齐平
+        tint_hover = _hex_mix(pal[self._on_key], pal["text"], 0.055)
+        tint_press = _hex_mix(pal[self._on_key], pal["text"], 0.10)
         if variant == "primary":
             base = (pal["accent"], pal["accent_fg"])
             hover = (pal["accent_hover"], pal["accent_fg"])
@@ -1099,18 +1102,18 @@ class FlatButton(RoundWidget):
             hover = (pal["danger"], "#ffffff")
         elif variant == "ghost":
             base = (None, pal["text_2"])
-            hover = (pal["surface_3"], pal["text"])
+            hover = (tint_hover, pal["text"])
         elif variant == "segment":
             base = (None, pal["text_2"])
-            hover = (pal["surface_3"], pal["text"])
+            hover = (tint_hover, pal["text"])
         else:
             base = (None, pal["text"])
-            hover = (pal["surface_3"], pal["text"])
-        press = (pal["border_strong"], pal["text"]) if variant == "default" else hover
+            hover = (tint_hover, pal["text"])
+        press = (tint_press, pal["text"]) if variant != "primary" and variant != "danger" else hover
         if self._on:
             base = hover = press = (pal["accent_soft"], pal["accent"])
         if not self._enabled:
-            base = hover = press = (pal["surface_2"], pal["text_3"])
+            base = hover = press = (None, pal["text_3"])
         return base, hover, press
 
     def _paint(self, pal):
@@ -1197,11 +1200,12 @@ class ColorSwatch(RoundWidget):
 
 
 class SearchBox(RoundWidget):
-    """圆角搜索框：canvas 画底与聚焦环，内嵌输入行。"""
+    """搜索框：与所在背景齐平——静置无底色，聚焦时仅显示底部细下划线。"""
 
     def __init__(self, master, theme, fonts, on_change=None, on_enter=None,
-                 on_shift_enter=None, on_escape=None, width=24, placeholder=None):
-        super().__init__(master, theme, radius=S(12))
+                 on_shift_enter=None, on_escape=None, width=24, placeholder=None,
+                 on_key="surface"):
+        super().__init__(master, theme, radius=S(12), on_key=on_key)
         self._fonts = fonts
         self._on_change = on_change
         self._on_enter = on_enter
@@ -1222,7 +1226,7 @@ class SearchBox(RoundWidget):
         self.clear_btn = FlatButton(self.inner, theme, icon="close",
                                     icon_size=S(11), variant="ghost",
                                     padx=S(5), pady=S(3),
-                                    on_key="surface_2", command=self.clear)
+                                    on_key=on_key, command=self.clear)
         self._inset = S(10)
 
         uif = self._font_obj(fonts.ui)
@@ -1248,15 +1252,15 @@ class SearchBox(RoundWidget):
     def _paint(self, pal):
         self._pal = pal
         super().configure(bg=pal[self._on_key])
-        self.inner.configure(bg=pal["surface_2"])
-        self.glyph.configure(bg=pal["surface_2"], fg=pal["text_3"], font=self._fonts.small)
+        self.inner.configure(bg=pal[self._on_key])
+        self.glyph.configure(bg=pal[self._on_key], fg=pal["text_3"], font=self._fonts.small)
         self.entry.configure(
-            bg=pal["surface_2"],
+            bg=pal[self._on_key],
             fg=pal["text_3"] if self._placeholder else pal["text"],
             insertbackground=pal["accent"],
             selectbackground=pal["select"],
             selectforeground=pal["text"],
-            readonlybackground=pal["surface_2"],
+            readonlybackground=pal[self._on_key],
         )
         self.delete("bg")
         focused = False
@@ -1264,17 +1268,16 @@ class SearchBox(RoundWidget):
             focused = self.entry.focus_get() is self.entry
         except Exception:
             focused = False
-        outline = pal["accent"] if focused else None
-        if HAS_PIL:
-            photo = rounded_photo(self, self._rw - 2 * AA_MARGIN,
-                                  self._rh - 2 * AA_MARGIN, S(12),
-                                  fill=pal["surface_2"], outline=outline)
-            item = self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
-                                     anchor="center", tags=("bg",))
-        else:
-            item = self._round(pal["surface_2"], outline, pill=False)
-            self.addtag_withtag("bg", item)
-        self.tag_lower(item)
+        # 与背景齐平：静置无底色，聚焦仅画底部细下划线
+        item = None
+        if focused:
+            x1 = AA_MARGIN + self._inset
+            x2 = self._rw - AA_MARGIN - self._inset
+            y1 = self._rh - AA_MARGIN - max(2, S(2))
+            item = self.create_rectangle(x1, y1, x2, self._rh - AA_MARGIN,
+                                         fill=pal["accent"], width=0, tags=("bg",))
+        if item is not None:
+            self.tag_lower(item)
 
     def _paint_ring(self):
         self._paint(self._pal)
@@ -1491,8 +1494,9 @@ class FolderPanel(TFrame):
         head.pack(side="top", fill="x", padx=S(16), pady=(S(14), S(6)))
         TLabel(head, self.theme, text="文件夹聊天文件", bg_key="bg", fg_key="text",
                font=self.fonts.section).pack(side="left")
-        self.count_chip = Chip(head, self.theme, text="0", bg_key="surface_2",
-                               fg_key="text_2", font=self.fonts.small_bold)
+        self.count_chip = Chip(head, self.theme, text="0", bg_key="bg",
+                               fg_key="text_3", on_key="bg",
+                               font=self.fonts.small_bold)
         self.count_chip.pack(side="right")
         self.path_label = TLabel(self, self.theme, text="", bg_key="bg",
                                  fg_key="text_3", font=self.fonts.tiny, anchor="w")
@@ -1500,7 +1504,7 @@ class FolderPanel(TFrame):
         bar = TFrame(self, self.theme, bg_key="bg")
         bar.pack(side="top", fill="x", padx=S(16), pady=(S(10), S(8)))
         self.filter_box = SearchBox(bar, self.theme, self.fonts, width=24,
-                                    placeholder="过滤标题…",
+                                    placeholder="过滤标题…", on_key="bg",
                                     on_change=self._on_filter,
                                     on_enter=self.confirm)
         self.filter_box.pack(side="left")
@@ -1508,7 +1512,7 @@ class FolderPanel(TFrame):
         self.filter_box.entry.bind("<Down>", self._on_arrow)
         self.btn_rescan = FlatButton(bar, self.theme, icon="refresh",
                                      variant="ghost", icon_size=S(16),
-                                     tooltip="重新扫描文件夹",
+                                     on_key="bg", tooltip="重新扫描文件夹",
                                      command=self.rescan)
         self.btn_rescan.pack(side="right")
 
@@ -2055,8 +2059,8 @@ class ChatViewerApp:
         head.pack(side="top", fill="x", padx=S(14), pady=(S(13), S(8)))
         TLabel(head, self.theme, text="消息列表", bg_key="surface", fg_key="text",
                font=self.fonts.section).pack(side="left")
-        self.side_count = Chip(head, self.theme, text="0", bg_key="surface_3",
-                               fg_key="text_2", font=self.fonts.small_bold)
+        self.side_count = Chip(head, self.theme, text="0", bg_key="surface",
+                               fg_key="text_3", font=self.fonts.small_bold)
         self.side_count.pack(side="right")
 
         holder = TFrame(self.sidebar, self.theme, bg_key="surface")

@@ -368,10 +368,15 @@ def parse_exported_at(value):
 # ══════════════════════════════════════════════════════════════════════════
 #  聊天数据解析
 # ══════════════════════════════════════════════════════════════════════════
-def traverse_chunks(chunks):
-    """按 chunk 树的 active 分支展开，返回 [(chunk_id, messages), ...]。"""
+def traverse_chunks(chunks, overrides=None):
+    """按 chunk 树展开 active 分支，返回 ([(chunk_id, messages), ...], forks)。
+
+    forks: {父 chunk_id: {"options": [兄弟 chunk_id...], "current": 当前走的子 chunk_id}}，
+    记录每个有多个子分支的节点；overrides 可指定某节点改走哪个子分支。
+    """
+    overrides = overrides or {}
     if not chunks:
-        return []
+        return [], {}
 
     chunk_map = {c["id"]: c for c in chunks if isinstance(c, dict) and "id" in c}
 
@@ -386,6 +391,7 @@ def traverse_chunks(chunks):
 
     visited = set()
     result = []
+    forks = {}
 
     def dfs(chunk):
         cid = chunk.get("id")
@@ -393,17 +399,36 @@ def traverse_chunks(chunks):
             return
         visited.add(cid)
         result.append((cid, chunk.get("messages", []) or []))
-        for child_id in chunk.get("children", []) or []:
-            child = chunk_map.get(child_id)
-            if child and child.get("active", False):
-                dfs(child)
+        children = [chunk_map.get(child_id)
+                    for child_id in chunk.get("children", []) or []]
+        children = [c for c in children if c is not None]
+        if not children:
+            return
+        if len(children) > 1:
+            chosen = None
+            want = overrides.get(cid)
+            if want:
+                chosen = next((c for c in children if c.get("id") == want), None)
+            if chosen is None:
+                chosen = next((c for c in children if c.get("active", False)), None)
+            if chosen is None:
+                chosen = children[0]
+            forks[cid] = {"options": [c.get("id") for c in children],
+                          "current": chosen.get("id")}
+            dfs(chosen)
+        else:
+            dfs(children[0])
 
     dfs(root)
-    return result
+    return result, forks
 
 
-def extract_messages(json_data):
-    """从酒馆导出的 JSON 中抽取全部消息与元信息。"""
+def extract_messages(json_data, branch_overrides=None):
+    """从酒馆导出的 JSON 中抽取全部消息与元信息。
+
+    branch_overrides: {父 chunk_id: 选择的子 chunk_id}，用于切换查看对话分支。
+    有多个子分支的节点会在其最后一条消息上附带 "_fork" 字段（分支提示数据）。
+    """
     chat_meta = json_data.get("chat", {}) or {}
     title = chat_meta.get("title") or "未命名会话"
     model = chat_meta.get("model") or "未知模型"
@@ -413,13 +438,14 @@ def extract_messages(json_data):
     chunks = chat_meta.get("chunks")
     msg_blocks = json_data.get("messages", []) or []
     all_messages = []
+    forks = {}
 
     if chunks:
         chunk_msgs_map = {}
         for block in msg_blocks:
             chunk_msgs_map[block.get("chunk_id", "")] = block.get("messages", []) or []
 
-        chunk_sequence = traverse_chunks(chunks)
+        chunk_sequence, forks = traverse_chunks(chunks, branch_overrides)
         seen = set()
 
         for chunk_id, inline_msgs in chunk_sequence:
@@ -442,6 +468,19 @@ def extract_messages(json_data):
 
     for index, msg in enumerate(all_messages):
         msg["_index"] = index
+
+    # 在每个分支节点的最后一条消息上标记分支信息，供正文渲染切换控件
+    for chunk_id, fork in forks.items():
+        last_idx = None
+        for msg in all_messages:
+            if msg.get("_chunk_id") == chunk_id:
+                last_idx = msg["_index"]
+        if last_idx is not None:
+            all_messages[last_idx]["_fork"] = {
+                "chunk_id": chunk_id,
+                "options": fork["options"],
+                "current": fork["current"],
+            }
 
     return {
         "title": title,
@@ -746,6 +785,17 @@ ICONS = {
     # 上 / 下双箭头（收起 / 展开操作栏）
     "chevron_up": [("line", [(6.5, 14.8), (12, 9.2), (17.5, 14.8)])],
     "chevron_down": [("line", [(6.5, 9.2), (12, 14.8), (17.5, 9.2)])],
+    # 左 / 右箭头（切换对话分支）
+    "chevron_left": [("line", [(14.5, 5.5), (8.5, 12), (14.5, 18.5)])],
+    "chevron_right": [("line", [(9.5, 5.5), (15.5, 12), (9.5, 18.5)])],
+    # 分叉（分支提示）
+    "branch": [
+        ("line", [(12, 20.5), (12, 13.5)]),
+        ("line", [(12, 13.5), (8.2, 9.2)]),
+        ("line", [(12, 13.5), (15.8, 9.2)]),
+        ("circle", 7.0, 6.4, 2.3),
+        ("circle", 17.0, 6.4, 2.3),
+    ],
     # 左侧栏面板（消息列表）
     "panel": [
         ("rect", 3.5, 5, 17, 14, 2.5),
@@ -1684,6 +1734,7 @@ class ChatViewerApp:
         self.chat_data = None
         self.messages = []
         self.edited = {}
+        self.branch_overrides = {}
         self.filter_key = "all"
         self.visible = []
         self.blocks = {}
@@ -2412,6 +2463,7 @@ class ChatViewerApp:
         self.chat_data = chat_data
         self.messages = chat_data["messages"]
         self.edited = {}
+        self.branch_overrides = {}
         self.current_file = filepath
         self.edit_msg_index = None
         self.side_selected = None
@@ -2555,6 +2607,27 @@ class ChatViewerApp:
                         area, self.theme, text="已修改", on_key="bg",
                         bg_key="accent_soft", fg_key="accent", font=self.fonts.chip),
                         padx=S(6))
+                fork = msg.get("_fork")
+                if fork:
+                    options = fork["options"]
+                    try:
+                        pos = options.index(fork["current"]) + 1
+                    except ValueError:
+                        pos = 1
+                    area.window_create("end", window=Chip(
+                        area, self.theme, text="分支 %d/%d" % (pos, len(options)),
+                        on_key="bg", bg_key="accent_soft", fg_key="accent",
+                        font=self.fonts.chip), padx=S(6))
+                    area.window_create("end", window=FlatButton(
+                        area, self.theme, icon="chevron_left", variant="ghost",
+                        icon_size=S(11), padx=S(4), pady=S(3), on_key="bg",
+                        tooltip="上一分支",
+                        command=lambda i=idx: self.switch_branch(i, -1)), padx=S(2))
+                    area.window_create("end", window=FlatButton(
+                        area, self.theme, icon="chevron_right", variant="ghost",
+                        icon_size=S(11), padx=S(4), pady=S(3), on_key="bg",
+                        tooltip="下一分支",
+                        command=lambda i=idx: self.switch_branch(i, 1)), padx=S(2))
                 area.insert("end", "\n", ("hdr_line",))
 
                 body_tags = ("body",) + (("body_dim",) if (internal or role == "system") else ())
@@ -3084,6 +3157,37 @@ class ChatViewerApp:
             messagebox.showerror("导出失败", "写入文件时出错：\n%s" % exc)
             return
         self._set_status("已导出 %d 条消息 → %s" % (len(self.visible), os.path.basename(path)))
+
+    # ══════════════════════════ 对话分支 ══════════════════════════
+    def switch_branch(self, idx, delta):
+        """在有分支的消息处切换到上 / 下一个分支（swipe 式查看）。"""
+        if not self.chat_data or idx is None or idx >= len(self.messages):
+            return
+        if self.edited:
+            self._set_status("有未保存的修改，切换分支前请先保存（Ctrl+S）")
+            return
+        fork = self.messages[idx].get("_fork")
+        if not fork:
+            return
+        options = fork["options"]
+        try:
+            pos = options.index(fork["current"])
+        except ValueError:
+            pos = 0
+        new_pos = pos + delta
+        if not 0 <= new_pos < len(options):
+            self._set_status("已经是%s一个分支（共 %d 个分支）"
+                             % ("第一" if delta < 0 else "最后", len(options)))
+            return
+        self.branch_overrides[fork["chunk_id"]] = options[new_pos]
+        self.chat_data = extract_messages(self.chat_data["raw"], self.branch_overrides)
+        self.messages = self.chat_data["messages"]
+        self.refresh_display()
+        self._scroll_to_message(idx)
+        self._flash_block(idx)
+        self._refresh_status_counts()
+        self._set_status("已切换到第 %d/%d 分支 · 共 %d 条消息"
+                         % (new_pos + 1, len(options), len(self.messages)))
 
     # ══════════════════════════ 搜索 / 筛选 ══════════════════════════
     def _search_term(self):

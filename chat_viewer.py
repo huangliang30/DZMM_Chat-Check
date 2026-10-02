@@ -369,7 +369,7 @@ def parse_exported_at(value):
 #  聊天数据解析
 # ══════════════════════════════════════════════════════════════════════════
 def _branch_preview(chunk, limit=24):
-    """取分支入口 chunk 的首条非空消息作预览文本。"""
+    """取 chunk 节点内联消息的首条非空内容作预览（消息块缺失时的兜底）。"""
     for msg in chunk.get("messages", []) or []:
         text = (msg.get("content") or "").strip()
         if text:
@@ -423,8 +423,7 @@ def traverse_chunks(chunks, overrides=None):
             if chosen is None:
                 chosen = children[0]
             forks[cid] = {"options": [c.get("id") for c in children],
-                          "current": chosen.get("id"),
-                          "previews": [_branch_preview(c) for c in children]}
+                          "current": chosen.get("id")}
             dfs(chosen)
         else:
             dfs(children[0])
@@ -479,18 +478,83 @@ def extract_messages(json_data, branch_overrides=None):
     for index, msg in enumerate(all_messages):
         msg["_index"] = index
 
-    # 在每个分支节点的最后一条消息上标记分支信息，供正文渲染切换控件
-    for chunk_id, fork in forks.items():
-        last_idx = None
-        for msg in all_messages:
-            if msg.get("_chunk_id") == chunk_id:
-                last_idx = msg["_index"]
-        if last_idx is not None:
-            all_messages[last_idx]["_fork"] = {
+    # 在每个分支节点上标记分支信息。分支点消息的选取：
+    #   1) 父 chunk 自己的最后一条消息（滑劈 / 对话中途分叉的常见格式）；
+    #   2) 父 chunk 没有自己的消息时（整树分支格式：chunk 仅作目录，消息全在
+    #      messages 块），挂到当前所选子分支子树的第一条消息——切换分支会
+    #      从这里开始替换整段内容。
+    if chunks and forks:
+        chunk_nodes = {c.get("id"): c for c in chunks
+                       if isinstance(c, dict) and "id" in c}
+        children_map = {cid: [k for k in (node.get("children") or []) if k in chunk_nodes]
+                        for cid, node in chunk_nodes.items()}
+
+        def subtree_ids(root_id):
+            seen, stack = set(), [root_id]
+            while stack:
+                cid = stack.pop()
+                if cid not in seen:
+                    seen.add(cid)
+                    stack.extend(children_map.get(cid, []))
+            return seen
+
+        def chunk_preview(cid):
+            for m in chunk_msgs_map.get(cid, []) or []:
+                text = (m.get("content") or "").strip()
+                if text:
+                    return ellipsis(text, 24)
+            node = chunk_nodes.get(cid)
+            return _branch_preview(node) if node else "（空）"
+
+        def previews_for(fork):
+            """各分支的预览：默认取首条消息；若开头相同或差异过小（截断后
+            无区分度），自动前进到第一条「截断后仍可分辨」的差异消息。"""
+            ids = fork["options"]
+            blocks = [chunk_msgs_map.get(cid) or [] for cid in ids]
+            best = None
+            for i in range(max((len(b) for b in blocks), default=0)):
+                texts = []
+                for b in blocks:
+                    if i < len(b):
+                        m = b[i]
+                        texts.append("%s|%s" % (m.get("role") or "",
+                                                (m.get("content") or "").strip()))
+                    else:
+                        texts.append(None)
+                if len(set(texts)) <= 1:
+                    continue
+                out = []
+                for t in texts:
+                    if t is None:
+                        out.append("（此分支到此为止）")
+                    else:
+                        content = t.split("|", 1)[1] if "|" in t else t
+                        out.append(ellipsis(content.strip() or "（空）", 24))
+                if len(set(out)) > 1:
+                    return out
+                if best is None:
+                    best = out
+            return best or [chunk_preview(cid) for cid in ids]
+
+        for chunk_id, fork in forks.items():
+            last_idx = None
+            for msg in all_messages:
+                if msg.get("_chunk_id") == chunk_id:
+                    last_idx = msg["_index"]
+            target = last_idx
+            if target is None:
+                sub = subtree_ids(fork["current"])
+                for msg in all_messages:
+                    if msg.get("_chunk_id") in sub:
+                        target = msg["_index"]
+                        break
+            if target is None:
+                continue
+            all_messages[target]["_fork"] = {
                 "chunk_id": chunk_id,
                 "options": fork["options"],
                 "current": fork["current"],
-                "previews": fork.get("previews", []),
+                "previews": previews_for(fork),
             }
 
     return {
@@ -2330,6 +2394,7 @@ class ChatViewerApp:
         area.tag_configure("hover", background=pal["surface_2"])
         area.tag_configure("sel", background=pal["accent_soft"])
         area.tag_configure("sel_num", font=self.fonts.small_bold, foreground=pal["accent"])
+        area.tag_configure("fork", font=self.fonts.small_bold, foreground=pal["accent"])
 
     def _apply_font_dependent_styles(self):
         pal = self.theme.pal
@@ -2488,7 +2553,11 @@ class ChatViewerApp:
         self._clear_edit_panel()
         self.refresh_display()
         self._set_sidebar_visible(self._want_sidebar)
-        self._set_status("已加载 %s" % ellipsis(os.path.basename(filepath), 60))
+        status = "已加载 %s" % ellipsis(os.path.basename(filepath), 60)
+        fork_count = sum(1 for m in self.messages if "_fork" in m)
+        if fork_count:
+            status += " · 检测到 %d 处对话分支（见粉色〔分支〕标记）" % fork_count
+        self._set_status(status)
         self._update_saved_chip()
         self.text_area.see("1.0")
 
@@ -2701,6 +2770,17 @@ class ChatViewerApp:
                 area.insert("end", "%s " % DOT, ("dot_" + color, "row"))
                 area.insert("end", str(idx + 1), ("num", "row"))
                 area.insert("end", "   ", ("row",))
+                fork = msg.get("_fork")
+                if fork:
+                    options = fork["options"]
+                    try:
+                        pos = options.index(fork["current"]) + 1
+                    except ValueError:
+                        pos = 1
+                    # 标记放行首（预览 48 字会被侧栏横向裁切，行尾不可见）
+                    area.insert("end", "〔分支%d/%d〕" % (pos, len(options)),
+                                ("fork", "row"))
+                    area.insert("end", " ", ("row",))
                 prev_tags = ("prev_edited", "row") if idx in self.edited else ("prev", "row")
                 area.insert("end", preview, prev_tags)
                 area.insert("end", pad, ("pad", "row"))

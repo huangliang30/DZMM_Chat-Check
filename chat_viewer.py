@@ -368,6 +368,15 @@ def parse_exported_at(value):
 # ══════════════════════════════════════════════════════════════════════════
 #  聊天数据解析
 # ══════════════════════════════════════════════════════════════════════════
+def _branch_preview(chunk, limit=24):
+    """取分支入口 chunk 的首条非空消息作预览文本。"""
+    for msg in chunk.get("messages", []) or []:
+        text = (msg.get("content") or "").strip()
+        if text:
+            return ellipsis(text, limit)
+    return "（空）"
+
+
 def traverse_chunks(chunks, overrides=None):
     """按 chunk 树展开 active 分支，返回 ([(chunk_id, messages), ...], forks)。
 
@@ -414,7 +423,8 @@ def traverse_chunks(chunks, overrides=None):
             if chosen is None:
                 chosen = children[0]
             forks[cid] = {"options": [c.get("id") for c in children],
-                          "current": chosen.get("id")}
+                          "current": chosen.get("id"),
+                          "previews": [_branch_preview(c) for c in children]}
             dfs(chosen)
         else:
             dfs(children[0])
@@ -480,6 +490,7 @@ def extract_messages(json_data, branch_overrides=None):
                 "chunk_id": chunk_id,
                 "options": fork["options"],
                 "current": fork["current"],
+                "previews": fork.get("previews", []),
             }
 
     return {
@@ -2614,10 +2625,14 @@ class ChatViewerApp:
                         pos = options.index(fork["current"]) + 1
                     except ValueError:
                         pos = 1
-                    area.window_create("end", window=Chip(
-                        area, self.theme, text="分支 %d/%d" % (pos, len(options)),
-                        on_key="bg", bg_key="accent_soft", fg_key="accent",
-                        font=self.fonts.chip), padx=S(6))
+                    chip = Chip(area, self.theme, text="分支 %d/%d" % (pos, len(options)),
+                                on_key="bg", bg_key="accent_soft", fg_key="accent",
+                                font=self.fonts.chip)
+                    chip.configure(cursor="hand2")
+                    chip.bind("<Button-1>",
+                              lambda _e, i=idx, w=chip: self._show_branch_menu(i, w))
+                    Tooltip(chip, self.theme, "点击选择要查看的分支")
+                    area.window_create("end", window=chip, padx=S(6))
                     area.window_create("end", window=FlatButton(
                         area, self.theme, icon="chevron_left", variant="ghost",
                         icon_size=S(11), padx=S(4), pady=S(3), on_key="bg",
@@ -3163,9 +3178,6 @@ class ChatViewerApp:
         """在有分支的消息处切换到上 / 下一个分支（swipe 式查看）。"""
         if not self.chat_data or idx is None or idx >= len(self.messages):
             return
-        if self.edited:
-            self._set_status("有未保存的修改，切换分支前请先保存（Ctrl+S）")
-            return
         fork = self.messages[idx].get("_fork")
         if not fork:
             return
@@ -3179,6 +3191,21 @@ class ChatViewerApp:
             self._set_status("已经是%s一个分支（共 %d 个分支）"
                              % ("第一" if delta < 0 else "最后", len(options)))
             return
+        self._apply_branch(idx, new_pos)
+
+    def _apply_branch(self, idx, new_pos):
+        """跳转到分支节点的第 new_pos 个分支并重渲染（所有切换的统一入口）。"""
+        if not self.chat_data or idx is None or idx >= len(self.messages):
+            return
+        if self.edited:
+            self._set_status("有未保存的修改，切换分支前请先保存（Ctrl+S）")
+            return
+        fork = self.messages[idx].get("_fork")
+        if not fork:
+            return
+        options = fork["options"]
+        if not 0 <= new_pos < len(options):
+            return
         self.branch_overrides[fork["chunk_id"]] = options[new_pos]
         self.chat_data = extract_messages(self.chat_data["raw"], self.branch_overrides)
         self.messages = self.chat_data["messages"]
@@ -3188,6 +3215,42 @@ class ChatViewerApp:
         self._refresh_status_counts()
         self._set_status("已切换到第 %d/%d 分支 · 共 %d 条消息"
                          % (new_pos + 1, len(options), len(self.messages)))
+
+    def _build_branch_menu(self, idx):
+        """构建分支下拉菜单：列出全部分支（含首句预览），当前分支加圆点标记。"""
+        if idx is None or idx >= len(self.messages):
+            return None
+        fork = self.messages[idx].get("_fork")
+        if not fork:
+            return None
+        options = fork["options"]
+        previews = fork.get("previews") or [""] * len(options)
+        menu = tk.Menu(self.root, tearoff=0, font=self.fonts.ui)
+        for i, cid in enumerate(options):
+            mark = (DOT + " ") if cid == fork["current"] else "    "
+            menu.add_command(
+                label="%s分支 %d/%d · %s" % (mark, i + 1, len(options), previews[i]),
+                command=lambda i=i: self._apply_branch(idx, i))
+        pal = self.theme.pal
+        menu.configure(
+            bg=pal["surface"], fg=pal["text"],
+            activebackground=pal["accent_soft"], activeforeground=pal["accent"],
+            disabledforeground=pal["text_3"], borderwidth=0, relief="flat",
+            selectcolor=pal["accent"])
+        return menu
+
+    def _show_branch_menu(self, idx, widget):
+        if self.edited:
+            self._set_status("有未保存的修改，切换分支前请先保存（Ctrl+S）")
+            return
+        menu = self._build_branch_menu(idx)
+        if menu is None:
+            return
+        try:
+            menu.tk_popup(widget.winfo_rootx(),
+                          widget.winfo_rooty() + widget.winfo_height())
+        finally:
+            menu.grab_release()
 
     # ══════════════════════════ 搜索 / 筛选 ══════════════════════════
     def _search_term(self):

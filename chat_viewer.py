@@ -135,19 +135,24 @@ PALETTES = {
         "border_strong": "#d2d2da",
         "text":          "#17171c",
         "text_2":        "#4c4c58",
-        "text_3":        "#8e8e9b",
+        "text_3":        "#6f6f7a",
         "accent":        "#ec4899",
         "accent_hover":  "#db2777",
         "accent_soft":   "#fce7f3",
+        "accent_text":   "#be185d",
         "accent_fg":     "#ffffff",
         "user":          "#6366f1",
         "user_soft":     "#e0e7ff",
+        "user_text":     "#4338ca",
         "ai":            "#db2777",
         "ai_soft":       "#fce7f3",
+        "ai_text":       "#be185d",
         "sys":           "#d97706",
         "sys_soft":      "#fef3c7",
+        "sys_text":      "#b45309",
         "other":         "#8b5cf6",
         "other_soft":    "#ede9fe",
+        "other_text":    "#6d28d9",
         "danger":        "#e11d48",
         "danger_soft":   "#ffe4e6",
         "ok":            "#16a34a",
@@ -172,19 +177,24 @@ PALETTES = {
         "border_strong": "#3b3b45",
         "text":          "#f2f2f5",
         "text_2":        "#a6a6b2",
-        "text_3":        "#6f6f7c",
+        "text_3":        "#7d7d8c",
         "accent":        "#ec4899",
         "accent_hover":  "#f472b6",
         "accent_soft":   "#3d1428",
+        "accent_text":   "#f9a8d4",
         "accent_fg":     "#ffffff",
         "user":          "#818cf8",
         "user_soft":     "#26214a",
+        "user_text":     "#a5b4fc",
         "ai":            "#f472b6",
         "ai_soft":       "#3d1428",
+        "ai_text":       "#f9a8d4",
         "sys":           "#fbbf24",
         "sys_soft":      "#33260a",
+        "sys_text":      "#fcd34d",
         "other":         "#c084fc",
         "other_soft":    "#2a1a4a",
+        "other_text":    "#d8b4fe",
         "danger":        "#fb7185",
         "danger_soft":   "#4c0519",
         "ok":            "#4ade80",
@@ -2148,7 +2158,7 @@ class ChatViewerApp:
         self.lbl_status.pack(side="left", pady=S(6))
 
         self.lbl_saved = Chip(bar, self.theme, text="", bg_key="accent_soft",
-                              fg_key="accent", font=self.fonts.tiny)
+                              fg_key="accent_text", font=self.fonts.tiny)
         self.lbl_info = TLabel(bar, self.theme, bg_key="surface", fg_key="text_3",
                                font=self.fonts.small)
         self.lbl_info.pack(side="right", padx=(S(10), S(18)), pady=S(6))
@@ -2542,7 +2552,7 @@ class ChatViewerApp:
                                background=pal[key + "_soft"], spacing1=S(15), spacing3=S(7))
         area.tag_configure("hdr_meta", font=self.fonts.chip_plain, foreground=pal["text_3"],
                            spacing1=S(22), spacing3=S(9))
-        area.tag_configure("hdr_edited", font=self.fonts.chip, foreground=pal["accent"],
+        area.tag_configure("hdr_edited", font=self.fonts.chip, foreground=pal["accent_text"],
                            background=pal["accent_soft"])
         area.tag_configure("date_chip", justify="center", font=self.fonts.small_bold,
                            foreground=pal["text_2"], background=pal["surface_3"],
@@ -2576,15 +2586,15 @@ class ChatViewerApp:
         area.tag_configure("num", font=self.fonts.small_bold, foreground=pal["text_3"],
                            spacing1=S(5), spacing3=S(5))
         area.tag_configure("prev", font=self.fonts.small, foreground=pal["text_2"])
-        area.tag_configure("prev_edited", font=self.fonts.small_bold, foreground=pal["accent"])
+        area.tag_configure("prev_edited", font=self.fonts.small_bold, foreground=pal["accent_text"])
         area.tag_configure("empty", font=self.fonts.small, foreground=pal["text_3"],
                            justify="center", spacing1=S(24))
         for key in ("user", "ai", "sys", "other"):
             area.tag_configure("dot_" + key, font=self.fonts.small_bold, foreground=pal[key])
         area.tag_configure("hover", background=pal["surface_2"])
         area.tag_configure("sel", background=pal["accent_soft"])
-        area.tag_configure("sel_num", font=self.fonts.small_bold, foreground=pal["accent"])
-        area.tag_configure("fork", font=self.fonts.small_bold, foreground=pal["accent"])
+        area.tag_configure("sel_num", font=self.fonts.small_bold, foreground=pal["accent_text"])
+        area.tag_configure("fork", font=self.fonts.small_bold, foreground=pal["accent_text"])
 
     def _apply_font_dependent_styles(self):
         pal = self.theme.pal
@@ -2868,7 +2878,7 @@ class ChatViewerApp:
 
                 area.window_create("end", window=Chip(
                     area, self.theme, text="%s %s" % (DOT, meta["cn"]), on_key="bg",
-                    bg_key=color + "_soft", fg_key=color, font=self.fonts.chip))
+                    bg_key=color + "_soft", fg_key=color + "_text", font=self.fonts.chip))
                 if internal:
                     area.window_create("end", window=Chip(
                         area, self.theme, text="内部", on_key="bg",
@@ -2879,7 +2889,7 @@ class ChatViewerApp:
                 if idx in self.edited:
                     area.window_create("end", window=Chip(
                         area, self.theme, text="已修改", on_key="bg",
-                        bg_key="accent_soft", fg_key="accent", font=self.fonts.chip),
+                        bg_key="accent_soft", fg_key="accent_text", font=self.fonts.chip),
                         padx=S(6))
                 fork = msg.get("_fork")
                 if fork:
@@ -2889,7 +2899,7 @@ class ChatViewerApp:
                     except ValueError:
                         pos = 1
                     chip = Chip(area, self.theme, text="分支 %d/%d" % (pos, len(options)),
-                                on_key="bg", bg_key="accent_soft", fg_key="accent",
+                                on_key="bg", bg_key="accent_soft", fg_key="accent_text",
                                 font=self.fonts.chip)
                     chip.configure(cursor="hand2")
                     chip.bind("<Button-1>",

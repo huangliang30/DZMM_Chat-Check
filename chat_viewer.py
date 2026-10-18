@@ -72,6 +72,10 @@ def S(value):
     return max(1, int(round(value * DPI_SCALE)))
 
 
+# 正文阅读栏宽度上限（像素）：超过这个宽度就不再拉长行，改为两侧留白
+MEASURE_WIDTH = S(720)
+
+
 def settings_path():
     base = os.environ.get("APPDATA")
     if not base:
@@ -123,15 +127,15 @@ def save_settings(cfg):
 # ══════════════════════════════════════════════════════════════════════════
 PALETTES = {
     "light": {
-        "bg":            "#fafafa",
+        "bg":            "#f7f7f9",
         "surface":       "#ffffff",
-        "surface_2":     "#f4f4f5",
-        "surface_3":     "#e8e8eb",
-        "border":        "#e4e4e7",
-        "border_strong": "#d4d4d8",
-        "text":          "#18181b",
-        "text_2":        "#52525b",
-        "text_3":        "#a1a1aa",
+        "surface_2":     "#f1f1f4",
+        "surface_3":     "#e7e7ec",
+        "border":        "#e5e5ea",
+        "border_strong": "#d2d2da",
+        "text":          "#17171c",
+        "text_2":        "#4c4c58",
+        "text_3":        "#8e8e9b",
         "accent":        "#ec4899",
         "accent_hover":  "#db2777",
         "accent_soft":   "#fce7f3",
@@ -152,22 +156,23 @@ PALETTES = {
         "hl":            "#fde68a",
         "hl_cur":        "#f59e0b",
         "hl_fg":         "#422006",
-        "flash":         "#fef3c7",
+        "flash":         "#fbf0f6",
+        "focus":         "#f9a8d4",
         "quote":         "#d97706",
         "thumb":         "#d4d4d8",
         "thumb_hover":   "#a1a1aa",
         "trough":        "#fafafa",
     },
     "dark": {
-        "bg":            "#0e0e10",
-        "surface":       "#161618",
-        "surface_2":     "#1e1e21",
-        "surface_3":     "#29292d",
-        "border":        "#26262a",
-        "border_strong": "#3f3f46",
-        "text":          "#f4f4f5",
-        "text_2":        "#a1a1aa",
-        "text_3":        "#71717a",
+        "bg":            "#0b0b0d",
+        "surface":       "#121215",
+        "surface_2":     "#191920",
+        "surface_3":     "#26262e",
+        "border":        "#222229",
+        "border_strong": "#3b3b45",
+        "text":          "#f2f2f5",
+        "text_2":        "#a6a6b2",
+        "text_3":        "#6f6f7c",
         "accent":        "#ec4899",
         "accent_hover":  "#f472b6",
         "accent_soft":   "#3d1428",
@@ -188,7 +193,8 @@ PALETTES = {
         "hl":            "#713f12",
         "hl_cur":        "#a16207",
         "hl_fg":         "#fef08a",
-        "flash":         "#451a03",
+        "flash":         "#2b1019",
+        "focus":         "#9d2463",
         "quote":         "#f59e0b",
         "thumb":         "#3f3f46",
         "thumb_hover":   "#52525b",
@@ -830,9 +836,9 @@ ICONS = {
     ],
     # 软盘（保存）
     "save": [
-        ("line", [(4.5, 4.5), (16.5, 4.5), (19.5, 7.5), (19.5, 19.5), (4.5, 19.5), (4.5, 4.5)]),
-        ("line", [(8.5, 4.5), (8.5, 10), (14.5, 10), (14.5, 4.5)]),
-        ("rect", 8, 13.5, 8, 6, 1),
+        ("line", [(5, 5), (16.4, 5), (19, 7.6), (19, 19), (5, 19), (5, 5)]),
+        ("line", [(9, 5), (9, 10.2), (14, 10.2), (14, 5)]),
+        ("line", [(9, 19), (9, 14.4), (15, 14.4), (15, 19)]),
     ],
     # 荧光笔 + 下划线（引号高亮）
     "marker": [
@@ -1042,10 +1048,26 @@ def draw_icon_canvas(canvas, name, color, cx, cy, size):
                               outline=color, width=w)
 
 
-class Tooltip:
-    """主题化悬停提示：悬停约半秒后在按钮下方浮现功能说明。"""
+_UI_FAMILY = []
 
-    DELAY = 520
+
+def _ui_family():
+    """取系统默认 UI 字体族，避免硬编码一个当前机器上不存在的字体名。"""
+    if _UI_FAMILY:
+        return _UI_FAMILY[0]
+    try:
+        family = tkfont.nametofont("TkDefaultFont").actual("family")
+    except Exception:
+        family = FONT_FAMILIES[0]
+    _UI_FAMILY.append(family)
+    return family
+
+
+class Tooltip:
+
+    """主题化悬停提示：悬停片刻后在按钮下方浮现功能说明。"""
+
+    DELAY = 360
 
     def __init__(self, widget, theme, text):
         self._widget = widget
@@ -1096,9 +1118,9 @@ class Tooltip:
         except Exception:
             pass
         inner = tk.Label(
-            tip, text=self._text, justify="left", padx=S(9), pady=S(4),
+            tip, text=self._text, justify="left", padx=S(10), pady=S(5),
             bg=pal["surface_3"], fg=pal["text"], bd=0,
-            font=(FONT_FAMILIES[0], 9),
+            font=(_ui_family(), 9),
         )
         inner.pack(expand=True, padx=1, pady=1, fill="both")
         tip.configure(bg=pal["border_strong"])
@@ -1228,6 +1250,9 @@ class FlatButton(RoundWidget):
         elif variant == "ghost":
             base = (None, pal["text_2"])
             hover = (tint_hover, pal["text"])
+        elif variant == "soft":
+            base = (pal["surface_2"], pal["text_2"])
+            hover = (pal["surface_3"], pal["text"])
         elif variant == "segment":
             base = (None, pal["text_2"])
             hover = (tint_hover, pal["text"])
@@ -1305,12 +1330,12 @@ class ColorSwatch(RoundWidget):
             self._command()
 
     def _paint(self, pal):
-        size = S(24)
+        size = S(20)
         self.delete("all")
         super().configure(bg=pal[self._on_key])
         if HAS_PIL:
             self._resize(size + 2 * AA_MARGIN, size + 2 * AA_MARGIN)
-            d = size - S(4)
+            d = size - S(3)
             photo = rounded_photo(self, d, d, d / 2.0, fill=self._color,
                                   outline=pal["border_strong"] if self._hover else None)
             self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
@@ -1594,8 +1619,36 @@ def _darker(color, ratio=0.2):
 
 
 def ellipsis(text, limit):
+
     text = (text or "").replace("\r", " ").replace("\n", " ").strip()
     return text if len(text) <= limit else text[:limit - 1] + "\u2026"
+
+
+_FIT_FONTS = {}
+
+
+def fit_text(widget, text, spec, max_px):
+    """按像素宽度截断并加省略号（比按字数截断更准，双宽字符也能对齐）。"""
+    text = (text or "").replace("\r", " ").replace("\n", " ").strip()
+    key = (str(spec),)
+    fobj = _FIT_FONTS.get(key)
+    if fobj is None:
+        try:
+            fobj = tkfont.Font(root=widget, font=spec)
+        except Exception:
+            return text
+        _FIT_FONTS[key] = fobj
+    if fobj.measure(text) <= max_px:
+        return text
+    ell = "\u2026"
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if fobj.measure(text[:mid] + ell) <= max_px:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[:lo].rstrip() + ell
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1828,6 +1881,8 @@ class ChatViewerApp:
         self.cursor_index = None
         self._last_dir = self.settings.get("last_dir") or ""
         self._folder_mode = False
+        self._auto_hidden = False
+        self._edit_overlay = False
 
         # ── 窗口 ──
         screen_w = self.root.winfo_screenwidth()
@@ -1877,6 +1932,9 @@ class ChatViewerApp:
         self.root.bind("<Control-equal>", lambda e: self.change_font_size(1))
         self.root.bind("<Control-minus>", lambda e: self.change_font_size(-1))
         self.root.bind("<Escape>", lambda e: self._on_escape())
+        self.root.bind("<Prior>", lambda e: self._page_scroll(-1))
+        self.root.bind("<Next>", lambda e: self._page_scroll(1))
+        self.root.bind("<Configure>", self._on_root_configure, add="+")
         self.root.bind("<MouseWheel>", self._on_mousewheel, add="+")
 
         if HAS_DND:
@@ -1893,7 +1951,7 @@ class ChatViewerApp:
         self._update_saved_chip()
         self._set_infobar_visible(False)
         self._want_sidebar = bool(self.settings.get("show_sidebar", True))
-        self._set_sidebar_visible(False)
+        self._set_sidebar_visible(False, persist=False)
         if not self.settings.get("show_toolbar", True):
             self._set_toolbar_visible(False)
 
@@ -1922,18 +1980,21 @@ class ChatViewerApp:
         self.toolbar_line.pack(side="top", fill="x")
 
         brand = TFrame(bar, self.theme, bg_key="surface")
-        brand.pack(side="left", padx=(S(14), S(8)), pady=S(9))
+        brand.pack(side="left", padx=(S(18), S(10)), pady=S(9))
+        self.brand_box = brand
         TLabel(brand, self.theme, text=DOT, bg_key="surface", fg_key="accent",
                font=(self.fonts.family, 12)).pack(side="left", pady=S(2))
         stack = TFrame(brand, self.theme, bg_key="surface")
-        stack.pack(side="left", padx=(S(6), 0))
+        stack.pack(side="left", padx=(S(7), 0))
+        self.brand_stack = stack
         TLabel(stack, self.theme, text="AI Chat Check", bg_key="surface", fg_key="text",
                font=self.fonts.ui_bold).pack(anchor="w")
         TLabel(stack, self.theme, text="酒馆聊天记录查看器", bg_key="surface", fg_key="text_3",
                font=self.fonts.tiny).pack(anchor="w")
 
-        self._vline(bar).pack(side="left", fill="y", padx=S(8), pady=S(14))
+        self.brand_sep = self._toolbar_sep(bar)
 
+        # 分组一：文件
         self.btn_open = FlatButton(bar, self.theme, icon="open", variant="primary",
                                    tooltip="打开 JSON 文件（Ctrl+O）",
                                    command=self.open_file)
@@ -1942,6 +2003,10 @@ class ChatViewerApp:
                                      tooltip="文件夹选片（Ctrl+Shift+O）",
                                      command=self.open_folder)
         self.btn_folder.pack(side="left", padx=S(3), pady=S(9))
+
+        self._toolbar_sep(bar, gap=S(6))
+
+        # 分组二：编辑
         self.btn_copy = FlatButton(bar, self.theme, icon="copy", variant="ghost",
                                    tooltip="复制选中内容（Ctrl+C）",
                                    command=self.copy_selected)
@@ -1954,6 +2019,10 @@ class ChatViewerApp:
                                    tooltip="保存修改（Ctrl+S）",
                                    command=self.save_file)
         self.btn_save.pack(side="left", padx=S(3), pady=S(9))
+
+        self._toolbar_sep(bar, gap=S(6))
+
+        # 分组三：阅读（引号高亮与其色板是一个整体）
         self.btn_quote = FlatButton(bar, self.theme, icon="marker", variant="ghost",
                                     tooltip="引号高亮开关（Ctrl+H）",
                                     command=self.toggle_quote_highlight)
@@ -1963,6 +2032,10 @@ class ChatViewerApp:
         self.btn_quote_color.pack(side="left", padx=S(1), pady=S(9))
         self.btn_quote_color.bind("<Button-3>", lambda e: self.set_quote_color(""))
         Tooltip(self.btn_quote_color, self.theme, "高亮颜色 · 右键恢复默认")
+
+        self._toolbar_sep(bar, gap=S(6))
+
+        # 分组四：输出
         self.btn_export = FlatButton(bar, self.theme, icon="export", variant="ghost",
                                      tooltip="导出为 TXT",
                                      command=self.export_txt)
@@ -1976,15 +2049,16 @@ class ChatViewerApp:
         self.btn_collapse = FlatButton(bar, self.theme, icon="chevron_up",
                                        variant="ghost", tooltip="收起操作栏（Ctrl+T）",
                                        command=self.toggle_toolbar)
-        self.btn_collapse.pack(side="right", padx=(S(4), S(2)), pady=S(9))
+        self.btn_collapse.pack(side="right", padx=(S(4), S(4)), pady=S(9))
         self.btn_sidebar = FlatButton(bar, self.theme, icon="panel", variant="ghost",
                                       tooltip="显示 / 隐藏消息列表",
                                       command=self.toggle_sidebar)
-        self.btn_sidebar.pack(side="right", padx=(S(4), S(12)), pady=S(9))
+        self.btn_sidebar.pack(side="right", padx=(S(4), S(4)), pady=S(9))
         self.btn_theme = FlatButton(bar, self.theme, icon="moon", variant="ghost",
                                     tooltip="切换深色 / 浅色主题",
                                     command=self.toggle_theme)
         self.btn_theme.pack(side="right", padx=S(3), pady=S(9))
+        self._toolbar_sep(bar, gap=S(8))
         self.btn_font_up = FlatButton(bar, self.theme, icon="zoom_in",
                                       variant="ghost", icon_size=S(16),
                                       tooltip="增大字号（Ctrl + 加号）",
@@ -1995,17 +2069,22 @@ class ChatViewerApp:
                                         tooltip="减小字号（Ctrl + 减号）",
                                         command=lambda: self.change_font_size(-1))
         self.btn_font_down.pack(side="right", padx=S(3), pady=S(9))
-        self._vline(bar).pack(side="right", fill="y", padx=S(8), pady=S(14))
+        self._toolbar_sep(bar, gap=S(8))
 
         self.match_label = TLabel(bar, self.theme, text="", bg_key="surface",
                                   fg_key="text_3", font=self.fonts.small)
-        self.match_label.pack(side="right", padx=(S(8), S(10)))
+        self.match_label.pack(side="right", padx=(S(6), S(4)))
         self.search_box = SearchBox(bar, self.theme, self.fonts, width=20,
                                     on_change=self._on_search_change,
                                     on_enter=self.search_next,
                                     on_shift_enter=self.search_prev,
                                     on_escape=self._on_search_escape)
-        self.search_box.pack(side="right", pady=S(9))
+        self.search_box.pack(side="right", pady=S(9), padx=(0, S(10)))
+
+    def _toolbar_sep(self, parent, gap=S(9)):
+        line = self._vline(parent)
+        line.pack(side="left", fill="y", padx=S(gap), pady=S(16))
+        return line
 
     # ══════════════════════════ 会话信息栏 ══════════════════════════
     def _build_infobar(self):
@@ -2013,8 +2092,13 @@ class ChatViewerApp:
         self.infobar = bar
         self.infobar_line = TFrame(self.root, self.theme, bg_key="border", height=1)
 
+        # 阅读进度：信息栏底边的一条 2px 细线，随滚动填充
+        self.progress_canvas = tk.Canvas(bar, height=S(2), bd=0, highlightthickness=0,
+                                         bg=self.theme.pal["border"])
+        self.progress_canvas.pack(side="bottom", fill="x")
+
         inner = TFrame(bar, self.theme, bg_key="surface")
-        inner.pack(side="left", fill="both", expand=True, padx=S(16), pady=S(7))
+        inner.pack(side="left", fill="both", expand=True, padx=S(18), pady=S(9))
         self.infobar_inner = inner
 
         self.filter_seg = Segmented(inner, self.theme, self.fonts, FILTERS,
@@ -2030,12 +2114,12 @@ class ChatViewerApp:
                                           tooltip="返回文件夹列表",
                                           command=self._back_to_folder)
 
-        self.info_model = Chip(inner, self.theme, text="", bg_key="surface_3",
+        self.info_model = Chip(inner, self.theme, text="", bg_key="surface_2",
                                fg_key="text_2", font=self.fonts.small)
-        self.info_model.pack(side="left", padx=(S(10), S(6)))
-        self.info_time = Chip(inner, self.theme, text="", bg_key="surface",
-                              fg_key="text_3", font=self.fonts.small)
-        self.info_time.pack(side="left")
+        self.info_model.pack(side="left", padx=(S(12), S(4)))
+        self.info_time = TLabel(inner, self.theme, text="", bg_key="surface",
+                                fg_key="text_3", font=self.fonts.small)
+        self.info_time.pack(side="left", padx=(S(6), 0))
 
     def _set_infobar_visible(self, visible):
         self._infobar_visible = bool(visible)
@@ -2055,23 +2139,26 @@ class ChatViewerApp:
         self.status_line = TFrame(self.root, self.theme, bg_key="border", height=1)
         self.status_line.pack(side="bottom", fill="x")
 
+        TLabel(bar, self.theme, text=DOT, bg_key="surface", fg_key="accent",
+               font=(self.fonts.family, 7)).pack(side="left", padx=(S(18), S(7)),
+                                                  pady=S(7))
         self.lbl_status = TLabel(bar, self.theme, bg_key="surface", fg_key="text_2",
-                                 font=self.fonts.tiny, anchor="w",
+                                 font=self.fonts.small, anchor="w",
                                  text="就绪")
-        self.lbl_status.pack(side="left", padx=S(14), pady=S(6))
+        self.lbl_status.pack(side="left", pady=S(6))
 
         self.lbl_saved = Chip(bar, self.theme, text="", bg_key="accent_soft",
                               fg_key="accent", font=self.fonts.tiny)
         self.lbl_info = TLabel(bar, self.theme, bg_key="surface", fg_key="text_3",
-                               font=self.fonts.tiny)
-        self.lbl_info.pack(side="right", padx=S(14), pady=S(6))
+                               font=self.fonts.small)
+        self.lbl_info.pack(side="right", padx=(S(10), S(18)), pady=S(6))
 
     # ══════════════════════════ 主体区域 ══════════════════════════
     def _build_body(self):
         self.body = TFrame(self.root, self.theme, bg_key="bg")
         self.body.pack(side="top", fill="both", expand=True)
 
-        self.sidebar = TFrame(self.body, self.theme, bg_key="surface", width=S(288))
+        self.sidebar = TFrame(self.body, self.theme, bg_key="surface", width=S(300))
         self.sidebar.pack_propagate(False)
         self.sidebar_line = TFrame(self.body, self.theme, bg_key="border", width=1)
         self._build_sidebar()
@@ -2094,15 +2181,20 @@ class ChatViewerApp:
 
         self.text_area = tk.Text(
             frame, wrap="word", bd=0, relief="flat", font=self.fonts.content,
-            padx=S(28), pady=S(16), highlightthickness=0, insertwidth=0,
+            padx=S(24), pady=S(26), highlightthickness=0, insertwidth=0,
             state="disabled", cursor="xterm", spacing1=0, spacing2=0, spacing3=0,
             undo=False, width=30, height=12,
         )
         self.scroll = ttk.Scrollbar(frame, orient="vertical", command=self.text_area.yview,
                                     style="Chat.Vertical.TScrollbar")
-        self.text_area.configure(yscrollcommand=self.scroll.set)
+        self.text_area.configure(yscrollcommand=self._on_text_yscroll)
         self.scroll.pack(side="right", fill="y")
         self.text_area.pack(side="left", fill="both", expand=True)
+
+        self._text_pad = S(24)
+        self._scroll_job = None
+        frame.bind("<Configure>", self._on_transcript_configure, add="+")
+        self.text_area.bind("<Configure>", self._on_transcript_configure, add="+")
 
         self.text_area.bind("<Button-1>", self._on_text_click, add="+")
         self.text_area.bind("<Double-Button-1>", self._on_text_double_click)
@@ -2110,74 +2202,166 @@ class ChatViewerApp:
         self.text_area.bind("<Button-2>", self._show_context_menu)
         self._build_context_menu()
 
+    # -- 阅读栏宽：正文居中收窄到适合阅读的度量，两侧留白随窗口伸缩 --
+    def _on_transcript_configure(self, _event=None):
+        try:
+            width = self.text_area.winfo_width()
+        except Exception:
+            return
+        if width <= 1:
+            return
+        measure = min(MEASURE_WIDTH, max(S(340), width - S(48)))
+        pad = max(S(22), int((width - measure) / 2))
+        if abs(pad - getattr(self, "_text_pad", 0)) >= 2:
+            self._text_pad = pad
+            try:
+                self.text_area.configure(padx=pad)
+            except Exception:
+                pass
+
+    def _on_text_yscroll(self, first, last):
+        self.scroll.set(first, last)
+        self._draw_progress(float(first), float(last))
+
+    def _draw_progress(self, first, last):
+        canvas = getattr(self, "progress_canvas", None)
+        if canvas is None:
+            return
+        pal = self.theme.pal
+        try:
+            width = canvas.winfo_width()
+        except Exception:
+            return
+        canvas.delete("all")
+        canvas.configure(bg=pal["border"])
+        if width <= 4:
+            return
+        total = max(0.0, last - first)
+        frac = 1.0 if last >= 0.9995 else (first / max(1e-6, 1.0 - total))
+        frac = max(0.0, min(1.0, frac))
+        if frac <= 0.004:
+            return
+        canvas.create_rectangle(0, 0, int(width * frac), S(2),
+                                fill=_hex_mix(pal["border"], pal["accent"], 0.5),
+                                outline="")
+
+    def _refresh_progress(self):
+        try:
+            first, last = self.text_area.yview()
+        except Exception:
+            return
+        self._draw_progress(float(first), float(last))
+
+    def _animate_view(self, start, end):
+        area = self.text_area
+        total = 10
+        if getattr(self, "_scroll_job", None):
+            try:
+                self.root.after_cancel(self._scroll_job)
+            except Exception:
+                pass
+        def tick(i):
+            t = i / float(total)
+            ease = 1.0 - (1.0 - t) ** 3
+            try:
+                area.yview_moveto(start + (end - start) * ease)
+            except Exception:
+                return
+            if i < total:
+                self._scroll_job = self.root.after(16, lambda: tick(i + 1))
+            else:
+                self._scroll_job = None
+        tick(0)
+
     def _build_empty_state(self):
         empty = TFrame(self.stage, self.theme, bg_key="bg")
         self.empty_state = empty
-        box = TFrame(empty, self.theme, bg_key="bg")
-        box.place(relx=0.5, rely=0.44, anchor="center")
 
-        self.art = tk.Canvas(box, width=S(104), height=S(92), bd=0, highlightthickness=0)
-        self.art.pack(pady=(0, S(14)))
+        box = TFrame(empty, self.theme, bg_key="bg")
+        box.place(relx=0.5, rely=0.5, anchor="center")
+
+        self.art = tk.Canvas(box, width=S(196), height=S(150), bd=0, highlightthickness=0)
+        self.art.pack(pady=(0, S(20)))
         self.theme.subscribe(self._draw_art)
 
-        TLabel(box, self.theme, text="拖入 JSON 文件即可开始", bg_key="bg", fg_key="text",
-               font=self.fonts.hero).pack()
-        subtitle = "支持 SillyTavern（酒馆）导出的聊天记录"
-        if not HAS_DND:
-            subtitle += " · 当前未安装 tkinterdnd2，请用「打开」按钮选择文件"
+        TLabel(box, self.theme, text="SILLYTAVERN  ·  CHAT EXPORT",
+               bg_key="bg", fg_key="text_3",
+               font=(self.fonts.mono, 8)).pack()
+
+        TLabel(box, self.theme, text="把对话摊开来读", bg_key="bg", fg_key="text",
+               font=(self.fonts.family, 21, "bold")).pack(pady=(S(9), S(7)))
+
+        if HAS_DND:
+            subtitle = "拖入酒馆导出的 JSON，或从文件夹里挑一份"
+        else:
+            subtitle = "当前未安装 tkinterdnd2，请用「打开」按钮选择 JSON"
         self.empty_subtitle = TLabel(box, self.theme, text=subtitle, bg_key="bg",
                                      fg_key="text_2", font=self.fonts.ui)
-        self.empty_subtitle.pack(pady=(S(6), S(20)))
+        self.empty_subtitle.pack(pady=(0, S(26)))
 
+        pick_row = TFrame(box, self.theme, bg_key="bg")
+        pick_row.pack()
+        for name, icon, caption, command, variant in (
+                ("open", "open", "选择 JSON 文件", self.open_file, "primary"),
+                ("folder", "folder", "选择文件夹", self.open_folder, "soft")):
+            cell = TFrame(pick_row, self.theme, bg_key="bg")
+            cell.pack(side="left", padx=S(14))
+            button = FlatButton(cell, self.theme, icon=icon, variant=variant,
+                                icon_size=S(20), padx=S(18), pady=S(18),
+                                on_key="bg", tooltip=caption, command=command)
+            button.pack()
+            TLabel(cell, self.theme, text=caption, bg_key="bg",
+                   fg_key="text_2" if variant == "primary" else "text_3",
+                   font=self.fonts.small).pack(pady=(S(9), 0))
+            setattr(self, "empty_" + name, button)
+
+        TFrame(box, self.theme, bg_key="border", height=1).pack(fill="x",
+                                                                pady=(S(30), S(16)))
         tips = TFrame(box, self.theme, bg_key="bg")
         tips.pack()
         shortcuts = [
-            ("Ctrl + O", "打开文件"),
-            ("Ctrl + F", "搜索内容"),
-            ("Ctrl + E", "编辑模式"),
-            ("Ctrl + C", "复制选中"),
-            ("Ctrl + H", "引号高亮"),
-            ("Ctrl + R", "查找替换"),
-            ("Ctrl + T", "操作栏收展"),
+            ("Ctrl+O", "打开文件"),
+            ("Ctrl+F", "搜索内容"),
+            ("Ctrl+E", "编辑模式"),
+            ("Ctrl+C", "复制选中"),
+            ("Ctrl+H", "引号高亮"),
+            ("Ctrl+R", "查找替换"),
+            ("Ctrl+T", "操作栏收展"),
             ("Ctrl+Shift+O", "文件夹选片"),
         ]
         for row, (key, desc) in enumerate(shortcuts):
             cell = TFrame(tips, self.theme, bg_key="bg")
-            cell.grid(row=row // 2, column=row % 2, sticky="w", padx=S(10), pady=S(4))
-            Chip(cell, self.theme, text=key, bg_key="surface", fg_key="text_2",
-                 on_key="bg", font=(self.fonts.mono, 8, "bold")).pack(side="left")
+            cell.grid(row=row // 2, column=row % 2, sticky="w",
+                      padx=S(6), pady=S(3))
+            Chip(cell, self.theme, text=key, bg_key="surface_3", fg_key="text_2",
+                 on_key="bg", font=(self.fonts.mono, 8)).pack(side="left")
             TLabel(cell, self.theme, text=desc, bg_key="bg", fg_key="text_3",
-                   font=self.fonts.small).pack(side="left", padx=(S(8), S(18)))
+                   font=self.fonts.small).pack(side="left", padx=(S(9), S(20)))
 
-        pick_row = TFrame(box, self.theme, bg_key="bg")
-        pick_row.pack(pady=(S(22), 0))
-        for name, icon, caption, command in (
-                ("open", "open", "选择 JSON 文件", self.open_file),
-                ("folder", "folder", "选择文件夹", self.open_folder)):
-            cell = TFrame(pick_row, self.theme, bg_key="bg")
-            cell.pack(side="left", padx=(0, S(8)))
-            button = FlatButton(cell, self.theme, icon=icon, variant="primary",
-                                icon_size=S(22), padx=S(15), pady=S(15),
-                                on_key="bg", tooltip=caption, command=command)
-            button.pack()
-            TLabel(cell, self.theme, text=caption, bg_key="bg", fg_key="text_2",
-                   font=self.fonts.small).pack(pady=(S(5), 0))
-            setattr(self, "empty_" + name, button)
+    def _draw_drop_zone(self):
+        """首屏四角的对位标记（拖拽区暗示）；无画布时静默跳过。"""
+        canvas = getattr(self, "drop_canvas", None)
+        if canvas is None or not canvas.winfo_exists():
+            return
 
     def _draw_art(self, pal):
         canvas = self.art
         canvas.configure(bg=pal["bg"])
         canvas.delete("all")
-        width = S(104)
-        height = S(92)
-        rounded_rect(canvas, S(6), S(8), width - S(26), S(42), S(12),
+        # 文档卡片
+        rounded_rect(canvas, S(12), S(8), S(140), S(100), S(14),
+                     fill=pal["surface_2"], outline=pal["border_strong"], width=S(2))
+        for y, right in ((S(28), S(108)), (S(42), S(118)), (S(56), S(92))):
+            rounded_rect(canvas, S(26), y, right, y + S(4), S(2),
+                         fill=pal["border_strong"], outline="")
+        # 引号高亮：荧光笔式的横条压在被强调的那一行下面
+        rounded_rect(canvas, S(24), S(61), S(86), S(68), S(3),
+                     fill=_hex_mix(pal["accent_soft"], pal["accent"], 0.55), outline="")
+        # 对话气泡
+        rounded_rect(canvas, S(56), S(76), S(186), S(130), S(18),
                      fill=pal["user_soft"], outline=pal["user"], width=S(2))
-        rounded_rect(canvas, S(26), S(52), width - S(6), height - S(8), S(12),
-                     fill=pal["ai_soft"], outline=pal["ai"], width=S(2))
-        for offset in (S(18), S(28), S(38)):
-            canvas.create_oval(offset, S(22), offset + S(4), S(26), fill=pal["user"], outline="")
-        for offset in (S(40), S(50), S(60)):
-            canvas.create_oval(offset, S(68), offset + S(4), S(72), fill=pal["ai"], outline="")
+        for x in (S(80), S(98), S(116)):
+            canvas.create_oval(x, S(99), x + S(9), S(108), fill=pal["user"], outline="")
 
     # ══════════════════════════ 左侧消息列表 ══════════════════════════
     def _build_sidebar(self):
@@ -2211,6 +2395,8 @@ class ChatViewerApp:
         self.side_text.bind("<Up>", self._on_side_key)
         self.side_text.bind("<Down>", self._on_side_key)
         self.side_text.bind("<Return>", self._on_side_key)
+        self.side_text.bind("<Prior>", lambda e: self._page_scroll(-1))
+        self.side_text.bind("<Next>", lambda e: self._page_scroll(1))
 
         self.side_hint = TLabel(self.sidebar, self.theme, text="单击定位 · 双击编辑",
                                 bg_key="surface", fg_key="text_3", font=self.fonts.tiny)
@@ -2285,7 +2471,7 @@ class ChatViewerApp:
         self._set_edit_enabled(False)
 
     def _on_edit_focus(self, _event=None):
-        self.edit_border.set_bg_key("accent")
+        self.edit_border.set_bg_key("focus")
 
     def _on_edit_blur(self, _event=None):
         self.edit_border.set_bg_key("border_strong")
@@ -2342,26 +2528,27 @@ class ChatViewerApp:
             inactiveselectbackground=pal["select"], highlightthickness=0,
             font=self.fonts.content,
         )
-        area.tag_configure("gap", font=self.fonts.gap)
+        area.tag_configure("gap", font=(self.fonts.family, 1),
+                           spacing1=0, spacing3=S(20))
         area.tag_configure("body", font=self.fonts.content, foreground=pal["text"],
-                           lmargin1=S(10), lmargin2=S(10), rmargin=S(20),
-                           spacing1=S(1), spacing2=S(6), spacing3=S(2), justify="left")
-        area.tag_configure("card", lmargin1=S(10), lmargin2=S(10),
-                           rmargin=S(20), spacing1=S(8), spacing3=S(8))
+                           lmargin1=0, lmargin2=0, rmargin=0,
+                           spacing1=S(3), spacing2=S(11), spacing3=S(2), justify="left")
+        area.tag_configure("card", lmargin1=0, lmargin2=0,
+                           rmargin=0, spacing1=S(9), spacing3=S(9))
         area.tag_configure("body_dim", font=self.fonts.content_italic, foreground=pal["text_2"])
         area.tag_configure("ital", font=self.fonts.content_italic, foreground=pal["text_2"])
         for key in ("user", "ai", "sys", "other"):
             area.tag_configure("chip_" + key, font=self.fonts.chip, foreground=pal[key],
                                background=pal[key + "_soft"], spacing1=S(15), spacing3=S(7))
         area.tag_configure("hdr_meta", font=self.fonts.chip_plain, foreground=pal["text_3"],
-                           spacing1=S(15), spacing3=S(7))
+                           spacing1=S(22), spacing3=S(9))
         area.tag_configure("hdr_edited", font=self.fonts.chip, foreground=pal["accent"],
                            background=pal["accent_soft"])
         area.tag_configure("date_chip", justify="center", font=self.fonts.small_bold,
                            foreground=pal["text_2"], background=pal["surface_3"],
-                           spacing1=S(22), spacing3=S(13))
-        area.tag_configure("hdr_line", spacing1=S(15), spacing3=S(7))
-        area.tag_configure("date_line", justify="center", spacing1=S(22), spacing3=S(13))
+                           spacing1=S(20), spacing3=S(12))
+        area.tag_configure("hdr_line", spacing1=S(22), spacing3=S(9))
+        area.tag_configure("date_line", justify="center", spacing1=S(30), spacing3=S(15))
         area.tag_configure("quote", foreground=self._quote_color(pal))
         area.tag_configure("flash", background=pal["flash"])
         area.tag_configure("hl", background=pal["hl"], foreground=pal["hl_fg"])
@@ -2369,6 +2556,8 @@ class ChatViewerApp:
         area.tag_raise("card")
         for _t in ("quote", "hl", "hl_cur", "flash"):
             area.tag_raise(_t)
+
+        self._refresh_progress()
 
         self.edit_text.configure(
             bg=pal["surface_2"], fg=pal["text"], insertbackground=pal["accent"],
@@ -2381,10 +2570,11 @@ class ChatViewerApp:
         area.configure(bg=pal["surface"], fg=pal["text"], highlightthickness=0,
                        selectbackground=pal["select"], font=self.fonts.small,
                        spacing1=0, spacing2=0, spacing3=0)
-        area.tag_configure("row", font=self.fonts.small, spacing1=S(4), spacing3=S(4),
-                           lmargin1=S(10), lmargin2=S(10), rmargin=S(4))
+        area.tag_configure("row", font=self.fonts.small, spacing1=S(5), spacing3=S(5),
+                           lmargin1=S(12), lmargin2=S(12), rmargin=S(10))
         area.tag_configure("pad", font=self.fonts.small)
-        area.tag_configure("num", font=self.fonts.small_bold, foreground=pal["text_3"])
+        area.tag_configure("num", font=self.fonts.small_bold, foreground=pal["text_3"],
+                           spacing1=S(5), spacing3=S(5))
         area.tag_configure("prev", font=self.fonts.small, foreground=pal["text_2"])
         area.tag_configure("prev_edited", font=self.fonts.small_bold, foreground=pal["accent"])
         area.tag_configure("empty", font=self.fonts.small, foreground=pal["text_3"],
@@ -2495,8 +2685,7 @@ class ChatViewerApp:
             self._hide_empty_state()
             self._set_infobar_visible(True)
             if self._want_sidebar:
-                self.sidebar.pack(side="left", fill="y", before=self.stage)
-                self.sidebar_line.pack(side="left", fill="y", before=self.stage)
+                self._set_sidebar_visible(not self._auto_hidden, persist=False)
         else:
             self._show_empty_state()
         self._update_back_folder()
@@ -2552,14 +2741,19 @@ class ChatViewerApp:
         self._update_back_folder()
         self._clear_edit_panel()
         self.refresh_display()
-        self._set_sidebar_visible(self._want_sidebar)
-        status = "已加载 %s" % ellipsis(os.path.basename(filepath), 60)
+        self._set_sidebar_visible(self._want_sidebar and not self._auto_hidden,
+                                  persist=False)
+        status = "已加载 %d 条消息" % len(self.messages)
         fork_count = sum(1 for m in self.messages if "_fork" in m)
         if fork_count:
-            status += " · 检测到 %d 处对话分支（见粉色〔分支〕标记）" % fork_count
+            status += " · %d 个分支" % fork_count
         self._set_status(status)
         self._update_saved_chip()
         self.text_area.see("1.0")
+        try:
+            self.text_area.focus_set()
+        except Exception:
+            pass
 
     def save_file(self):
         if not self.current_file or not self.chat_data:
@@ -2668,7 +2862,7 @@ class ChatViewerApp:
                     area.insert("end", " ", ("date_line",))
                     area.window_create("end", window=Chip(
                         area, self.theme, text=date_label(created), on_key="bg",
-                        bg_key="surface_3", fg_key="text_2", font=self.fonts.small_bold))
+                        bg_key="surface_2", fg_key="text_2", font=self.fonts.small))
                     area.insert("end", " \n", ("date_line",))
                     start = area.index("end-1c")
 
@@ -2678,10 +2872,10 @@ class ChatViewerApp:
                 if internal:
                     area.window_create("end", window=Chip(
                         area, self.theme, text="内部", on_key="bg",
-                        bg_key=color + "_soft", fg_key=color, font=self.fonts.chip),
+                        bg_key="surface_3", fg_key="text_3", font=self.fonts.chip),
                         padx=S(4))
                 bits = [bit for bit in (time_label(created), "#%d" % (idx + 1)) if bit]
-                area.insert("end", "    " + "   ·   ".join(bits), ("hdr_meta",))
+                area.insert("end", "   " + "  ·  ".join(bits), ("hdr_meta",))
                 if idx in self.edited:
                     area.window_create("end", window=Chip(
                         area, self.theme, text="已修改", on_key="bg",
@@ -2752,6 +2946,7 @@ class ChatViewerApp:
         self._render_sidebar()
         self._apply_search_highlights()
         self._refresh_status_counts()
+        self._refresh_progress()
 
     def _render_sidebar(self):
         area = self.side_text
@@ -2766,18 +2961,19 @@ class ChatViewerApp:
                 idx = msg["_index"]
                 color = role_color_key(msg.get("role", ""))
                 content = self.edited.get(idx, msg.get("content", "")) or ""
-                preview = ellipsis(content, 48) or "（空消息）"
-                area.insert("end", "%s " % DOT, ("dot_" + color, "row"))
-                area.insert("end", str(idx + 1), ("num", "row"))
-                area.insert("end", "   ", ("row",))
                 fork = msg.get("_fork")
+                budget = S(226) - (S(62) if fork else 0)
+                preview = fit_text(self.side_text, content, self.fonts.small, budget) or "（空消息）"
+                area.insert("end", "%s " % DOT, ("dot_" + color, "row"))
+                area.insert("end", "%2d" % (idx + 1), ("num", "row"))
+                area.insert("end", "  ", ("row",))
                 if fork:
                     options = fork["options"]
                     try:
                         pos = options.index(fork["current"]) + 1
                     except ValueError:
                         pos = 1
-                    # 标记放行首（预览 48 字会被侧栏横向裁切，行尾不可见）
+                    # 标记放行首（预览会被侧栏横向裁切，行尾不可见）
                     area.insert("end", "〔分支%d/%d〕" % (pos, len(options)),
                                 ("fork", "row"))
                     area.insert("end", " ", ("row",))
@@ -2849,7 +3045,7 @@ class ChatViewerApp:
         self.empty_state.pack_forget()
         self.chat_frame.pack(side="left", fill="both", expand=True)
 
-    def _set_sidebar_visible(self, visible):
+    def _set_sidebar_visible(self, visible, persist=True):
         visible = bool(visible)
         if visible:
             self.sidebar.pack(side="left", fill="y", before=self.stage)
@@ -2858,15 +3054,72 @@ class ChatViewerApp:
             self.sidebar.pack_forget()
             self.sidebar_line.pack_forget()
         self.btn_sidebar.set_on(visible)
-        self.settings["show_sidebar"] = visible
+        if persist:
+            self.settings["show_sidebar"] = visible
 
     def _set_edit_panel_visible(self, visible):
         if visible:
-            self.edit_panel.pack(side="right", fill="y")
-            self.edit_line.pack(side="right", fill="y")
+            if getattr(self, "_edit_overlay", False):
+                self.edit_panel.place(relx=1.0, rely=0.0, anchor="ne",
+                                      relheight=1.0)
+                self.edit_line.place(relx=1.0, rely=0.0, anchor="ne",
+                                     relheight=1.0, x=-S(372), width=S(1))
+            else:
+                self.edit_panel.pack(side="right", fill="y")
+                self.edit_line.pack(side="right", fill="y")
         else:
+            self.edit_panel.place_forget()
             self.edit_panel.pack_forget()
+            self.edit_line.place_forget()
             self.edit_line.pack_forget()
+
+    # ══════════════════════════ 自适应 ══════════════════════════
+    def _on_root_configure(self, event=None):
+        if event is not None and event.widget is not self.root:
+            return
+        try:
+            width = self.root.winfo_width()
+        except Exception:
+            return
+        if width < S(80):
+            return
+        key = width
+        if key == getattr(self, "_last_width", None):
+            return
+        self._last_width = key
+        self._apply_compact(width)
+
+    def _apply_compact(self, width):
+        """窄窗时自动收起侧栏、编辑面板改为浮层，保证正文永远是主角。"""
+        compact = width < S(1040)
+        if compact and self.sidebar.winfo_ismapped() and not self._auto_hidden:
+            self._auto_hidden = True
+            self._set_sidebar_visible(False, persist=False)
+        elif not compact and self._auto_hidden:
+            self._auto_hidden = False
+            if self.settings.get("show_sidebar", True):
+                self._set_sidebar_visible(True, persist=False)
+
+        overlay = width < S(1240)
+        if overlay != self._edit_overlay:
+            self._edit_overlay = overlay
+            if self.edit_panel.winfo_ismapped():
+                self._set_edit_panel_visible(True)
+
+        # 窄窗优先保住搜索框与图标组：整块品牌先让位
+        compact_brand = width < S(1180)
+        if compact_brand != getattr(self, "_brand_compact", False):
+            self._brand_compact = compact_brand
+            if compact_brand:
+                self.brand_box.pack_forget()
+                self.brand_sep.pack_forget()
+                self.btn_open.pack_configure(padx=(S(16), S(3)))
+            else:
+                self.brand_box.pack(side="left", before=self.btn_open,
+                                    padx=(S(18), S(10)), pady=S(9))
+                self.brand_sep.pack(side="left", fill="y", before=self.btn_open,
+                                    padx=S(9), pady=S(16))
+                self.btn_open.pack_configure(padx=(S(2), S(3)))
 
     # ══════════════════════════ 列表交互 ══════════════════════════
     def _side_line_at(self, x, y):
@@ -2951,15 +3204,31 @@ class ChatViewerApp:
         area.see(block[0])
         info = area.dlineinfo(block[0])
         if info:
-            line_height = self._line_height()
-            wanted = max(S(24), int(area.winfo_height() * 0.16))
-            shift = int(round((info[1] - wanted) / float(line_height)))
-            if shift:
-                area.yview_scroll(shift, "units")
+            first, last = area.yview()
+            height = max(1, area.winfo_height())
+            wanted = max(S(22), int(height * 0.15))
+            delta = (info[1] - wanted) * (last - first) / float(height)
+            target = max(0.0, min(1.0 - (last - first), first + delta))
+            if abs(target - first) > 0.002:
+                self._animate_view(first, target)
         self._flash_block(idx)
 
     def _line_height(self):
         return max(8, int(self.fonts.content_size * DPI_SCALE * 1.42))
+
+    def _page_scroll(self, direction):
+        """PageUp / PageDown 始终翻正文，不管焦点落在侧栏还是别处。"""
+        if direction in (-1, 1):
+            if getattr(self, "_scroll_job", None):
+                try:
+                    self.root.after_cancel(self._scroll_job)
+                except Exception:
+                    pass
+                self._scroll_job = None
+            self.text_area.yview_scroll(direction * 22, "units")
+        else:
+            self.text_area.yview_moveto(0.0 if direction < 0 else 1.0)
+        return "break"
 
     def _flash_block(self, idx):
         block = self.blocks.get(idx)
@@ -3040,8 +3309,9 @@ class ChatViewerApp:
         self.btn_edit.set_on(enabled)
         if enabled:
             self._set_edit_panel_visible(True)
-            if not self.sidebar.winfo_ismapped() and self.messages:
-                self._set_sidebar_visible(True)
+            if (not self.sidebar.winfo_ismapped() and self.messages
+                    and not self._auto_hidden):
+                self._set_sidebar_visible(True, persist=False)
             self._set_status("编辑模式已开启 · 双击消息或在列表中双击即可编辑")
             if self.side_selected is not None:
                 self._open_message_for_edit(self.side_selected)
@@ -3356,6 +3626,11 @@ class ChatViewerApp:
 
     def _apply_filter(self):
         self._filter_job = None
+        try:
+            if not self.root.winfo_exists():
+                return
+        except Exception:
+            return
         if not self.messages:
             return
         self.refresh_display()
@@ -3365,7 +3640,7 @@ class ChatViewerApp:
         if not self.messages:
             return
         self.refresh_display()
-        label = dict(FILTERS).get(key, ("", key))[1]
+        label = next((item[1] for item in FILTERS if item[0] == key), key)
         self._set_status("筛选：%s" % label)
 
     def _apply_search_highlights(self):
@@ -3626,7 +3901,10 @@ class ChatViewerApp:
             handle.place(in_=self.root, relx=1.0, x=-S(10), y=S(6), anchor="ne")
 
     def toggle_sidebar(self):
-        self._set_sidebar_visible(not self.sidebar.winfo_ismapped())
+        target = not self.sidebar.winfo_ismapped()
+        self._want_sidebar = target
+        self._auto_hidden = False
+        self._set_sidebar_visible(target)
         save_settings(self.settings)
 
     def toggle_theme(self):
@@ -3658,8 +3936,9 @@ class ChatViewerApp:
             import ctypes
             dark = 1 if self.theme.name == "dark" else 0
             value = ctypes.c_int(dark)
-            ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, 20, ctypes.byref(value), ctypes.sizeof(value))
+            for attr in (20, 19):  # Win10 2004+ 用 20，早期版本用 19
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(value), ctypes.sizeof(value))
             corner = ctypes.c_int(2)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(
                 hwnd, 33, ctypes.byref(corner), ctypes.sizeof(corner))
@@ -3701,6 +3980,12 @@ class ChatViewerApp:
             widget = None
         while widget is not None:
             if isinstance(widget, tk.Text):
+                if widget is self.text_area and getattr(self, "_scroll_job", None):
+                    try:
+                        self.root.after_cancel(self._scroll_job)
+                    except Exception:
+                        pass
+                    self._scroll_job = None
                 widget.yview_scroll(steps, "units")
                 if widget is self.side_text:
                     widget.xview_moveto(0)

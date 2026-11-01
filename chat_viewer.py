@@ -123,92 +123,93 @@ def save_settings(cfg):
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  设计令牌（配色）
+#  设计令牌（配色）— Korean Minimal：温暖白底、石板蓝正文、粉彩点缀
+#  月白（默认）与暖沙两套均为浅色：风格规范禁止深色 / 黑色背景
 # ══════════════════════════════════════════════════════════════════════════
 PALETTES = {
     "light": {
-        "bg":            "#f7f7f9",
+        "bg":            "#faf9f7",
         "surface":       "#ffffff",
-        "surface_2":     "#f1f1f4",
-        "surface_3":     "#e7e7ec",
-        "border":        "#e5e5ea",
-        "border_strong": "#d2d2da",
-        "text":          "#17171c",
-        "text_2":        "#4c4c58",
-        "text_3":        "#6f6f7a",
-        "accent":        "#ec4899",
-        "accent_hover":  "#db2777",
-        "accent_soft":   "#fce7f3",
-        "accent_text":   "#be185d",
-        "accent_fg":     "#ffffff",
-        "user":          "#6366f1",
-        "user_soft":     "#e0e7ff",
-        "user_text":     "#4338ca",
-        "ai":            "#db2777",
-        "ai_soft":       "#fce7f3",
-        "ai_text":       "#be185d",
-        "sys":           "#d97706",
-        "sys_soft":      "#fef3c7",
-        "sys_text":      "#b45309",
-        "other":         "#8b5cf6",
-        "other_soft":    "#ede9fe",
-        "other_text":    "#6d28d9",
-        "danger":        "#e11d48",
-        "danger_soft":   "#ffe4e6",
-        "ok":            "#16a34a",
-        "ok_soft":       "#dcfce7",
-        "select":        "#fbcfe8",
-        "hl":            "#fde68a",
-        "hl_cur":        "#f59e0b",
-        "hl_fg":         "#422006",
-        "flash":         "#fbf0f6",
-        "focus":         "#f9a8d4",
-        "quote":         "#d97706",
-        "thumb":         "#d4d4d8",
-        "thumb_hover":   "#a1a1aa",
-        "trough":        "#fafafa",
+        "surface_2":     "#f4f1ec",
+        "surface_3":     "#eae5dc",
+        "border":        "#e9e4db",
+        "border_strong": "#d8d1c5",
+        "text":          "#3d4a5c",
+        "text_2":        "#556070",
+        "text_3":        "#616c7b",
+        "accent":        "#3d4a5c",
+        "accent_hover":  "#323d4d",
+        "accent_soft":   "#eaedf1",
+        "accent_text":   "#3d4a5c",
+        "accent_fg":     "#faf9f7",
+        "user":          "#57705f",
+        "user_soft":     "#e9f0ea",
+        "user_text":     "#57705f",
+        "ai":            "#8f6565",
+        "ai_soft":       "#f6ecec",
+        "ai_text":       "#8f6565",
+        "sys":           "#74633f",
+        "sys_soft":      "#f5efe2",
+        "sys_text":      "#74633f",
+        "other":         "#6e5a6a",
+        "other_soft":    "#f2edf2",
+        "other_text":    "#6e5a6a",
+        "danger":        "#8f534e",
+        "danger_soft":   "#f7e9e7",
+        "ok":            "#57705f",
+        "ok_soft":       "#e9f0ea",
+        "select":        "#efe3e3",
+        "hl":            "#f3ead9",
+        "hl_cur":        "#e9d7b8",
+        "hl_fg":         "#4a4436",
+        "flash":         "#f5efe3",
+        "focus":         "#e3c9c9",
+        "quote":         "#7e6845",
+        "thumb":         "#ddd6ca",
+        "thumb_hover":   "#c6beae",
+        "trough":        "#faf9f7",
     },
     "dark": {
-        "bg":            "#0b0b0d",
-        "surface":       "#121215",
-        "surface_2":     "#191920",
-        "surface_3":     "#26262e",
-        "border":        "#222229",
-        "border_strong": "#3b3b45",
-        "text":          "#f2f2f5",
-        "text_2":        "#a6a6b2",
-        "text_3":        "#7d7d8c",
-        "accent":        "#ec4899",
-        "accent_hover":  "#f472b6",
-        "accent_soft":   "#3d1428",
-        "accent_text":   "#f9a8d4",
-        "accent_fg":     "#ffffff",
-        "user":          "#818cf8",
-        "user_soft":     "#26214a",
-        "user_text":     "#a5b4fc",
-        "ai":            "#f472b6",
-        "ai_soft":       "#3d1428",
-        "ai_text":       "#f9a8d4",
-        "sys":           "#fbbf24",
-        "sys_soft":      "#33260a",
-        "sys_text":      "#fcd34d",
-        "other":         "#c084fc",
-        "other_soft":    "#2a1a4a",
-        "other_text":    "#d8b4fe",
-        "danger":        "#fb7185",
-        "danger_soft":   "#4c0519",
-        "ok":            "#4ade80",
-        "ok_soft":       "#052e16",
-        "select":        "#831843",
-        "hl":            "#713f12",
-        "hl_cur":        "#a16207",
-        "hl_fg":         "#fef08a",
-        "flash":         "#2b1019",
-        "focus":         "#9d2463",
-        "quote":         "#f59e0b",
-        "thumb":         "#3f3f46",
-        "thumb_hover":   "#52525b",
-        "trough":        "#161618",
+        "bg":            "#f1ede6",
+        "surface":       "#faf8f4",
+        "surface_2":     "#eae5db",
+        "surface_3":     "#ded7c9",
+        "border":        "#e0d9cc",
+        "border_strong": "#cfc7b7",
+        "text":          "#3f4b5d",
+        "text_2":        "#556070",
+        "text_3":        "#616c7b",
+        "accent":        "#3d4a5c",
+        "accent_hover":  "#323d4d",
+        "accent_soft":   "#e9e6de",
+        "accent_text":   "#3d4a5c",
+        "accent_fg":     "#faf9f7",
+        "user":          "#57705f",
+        "user_soft":     "#e7efe7",
+        "user_text":     "#57705f",
+        "ai":            "#8f6565",
+        "ai_soft":       "#f4eaea",
+        "ai_text":       "#8f6565",
+        "sys":           "#74633f",
+        "sys_soft":      "#f3ecdd",
+        "sys_text":      "#74633f",
+        "other":         "#6e5a6a",
+        "other_soft":    "#efe9ef",
+        "other_text":    "#6e5a6a",
+        "danger":        "#8f534e",
+        "danger_soft":   "#f6e9e7",
+        "ok":            "#57705f",
+        "ok_soft":       "#e7efe7",
+        "select":        "#efe2e2",
+        "hl":            "#efe6d2",
+        "hl_cur":        "#e6d3b2",
+        "hl_fg":         "#4a4436",
+        "flash":         "#f3ecdc",
+        "focus":         "#dfc6c6",
+        "quote":         "#7e6845",
+        "thumb":         "#d3cbbd",
+        "thumb_hover":   "#beb5a4",
+        "trough":        "#f1ede6",
     },
 }
 
@@ -264,15 +265,17 @@ class Fonts:
     def rebuild(self):
         fam = self.family
         size = self.content_size
+        # Korean Minimal：标题与正文保持轻盈（tkinter 无 light 字重，以 normal
+        # 表达），层级交给字号与颜色；仅极小的数字标签保留 bold 保证可读
         self.ui = (fam, 10)
-        self.ui_bold = (fam, 10, "bold")
+        self.ui_bold = (fam, 10)
         self.small = (fam, 9)
         self.small_bold = (fam, 9, "bold")
         self.tiny = (fam, 8)
-        self.section = (fam, 11, "bold")
-        self.title = (fam, 14, "bold")
-        self.hero = (fam, 17, "bold")
-        self.chip = (fam, max(8, size - 2), "bold")
+        self.section = (fam, 12)
+        self.title = (fam, 15)
+        self.hero = (fam, 18)
+        self.chip = (fam, max(8, size - 2))
         self.chip_plain = (fam, max(8, size - 2))
         self.content = (fam, size)
         self.content_italic = (fam, size, "italic")
@@ -905,6 +908,12 @@ ICONS = {
         ("line", [(5.5, 18.5), (7.2, 16.8)]),
         ("line", [(16.8, 7.2), (18.5, 5.5)]),
     ],
+    # 三只交叠的圆环（月白 / 暖沙主题切换）
+    "theme": [
+        ("circle", 8.6, 13.4, 4.1),
+        ("circle", 15.4, 13.4, 4.1),
+        ("circle", 12, 8.6, 4.1),
+    ],
     # 放大镜 + 加减号（字号）
     "zoom_in": [
         ("circle", 10.5, 10.5, 5.8),
@@ -1291,7 +1300,13 @@ class FlatButton(RoundWidget):
         super().configure(bg=pal[self._on_key])
         if fill and HAS_PIL:
             self._resize(width + 2 * AA_MARGIN, height + 2 * AA_MARGIN)
-            photo = rounded_photo(self, width, height, height / 2.0, fill=fill)
+            # Micro Lift：实心按钮悬停时以超浅暖阴影扩散表达层次；按下不叠加
+            shadow = None
+            if (self._hover and not self._press and self._enabled
+                    and self._variant in ("primary", "soft")):
+                shadow = _hex_mix(pal[self._on_key], "#3d4a5c", 0.13)
+            photo = rounded_photo(self, width, height, height / 2.0, fill=fill,
+                                  shadow=shadow, shadow_lift=1)
             self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
                               anchor="center")
         else:
@@ -1360,7 +1375,8 @@ class ColorSwatch(RoundWidget):
 
 
 class SearchBox(RoundWidget):
-    """搜索框：与所在背景齐平——静置无底色，聚焦时仅显示底部细下划线。"""
+    """搜索框（Korean Minimal 输入框）：无填充，发丝级圆角边框；
+    悬停边框微深，聚焦进一步加深并晕开淡淡的腮红光。"""
 
     def __init__(self, master, theme, fonts, on_change=None, on_enter=None,
                  on_shift_enter=None, on_escape=None, width=24, placeholder=None,
@@ -1374,6 +1390,7 @@ class SearchBox(RoundWidget):
         self._placeholder = True
         self._placeholder_text = placeholder or PLACEHOLDER
         self._clear_visible = False
+        self._box_hover = False
 
         self.inner = tk.Frame(self)
         self.glyph = tk.Label(self.inner, text="\U0001f50d")
@@ -1388,6 +1405,8 @@ class SearchBox(RoundWidget):
                                     padx=S(5), pady=S(3),
                                     on_key=on_key, command=self.clear)
         self._inset = S(10)
+        self.bind("<Enter>", lambda e: self._set_box_hover(True), add="+")
+        self.bind("<Leave>", lambda e: self._set_box_hover(False), add="+")
 
         uif = self._font_obj(fonts.ui)
         smallf = self._font_obj(fonts.small)
@@ -1409,6 +1428,10 @@ class SearchBox(RoundWidget):
         self._show_placeholder()
 
     # -- 外观 --
+    def _set_box_hover(self, on):
+        self._box_hover = on
+        self._paint_ring()
+
     def _paint(self, pal):
         self._pal = pal
         super().configure(bg=pal[self._on_key])
@@ -1428,14 +1451,21 @@ class SearchBox(RoundWidget):
             focused = self.entry.focus_get() is self.entry
         except Exception:
             focused = False
-        # 与背景齐平：静置无底色，聚焦仅画底部细下划线
+        # 无填充 + 发丝边框：静置 15% → 悬停 22% → 聚焦 40%（Muted Whisper）
+        strength = 0.40 if focused else (0.22 if self._box_hover else 0.15)
+        outline = _hex_mix(pal[self._on_key], pal["text"], strength)
         item = None
-        if focused:
-            x1 = AA_MARGIN + self._inset
-            x2 = self._rw - AA_MARGIN - self._inset
-            y1 = self._rh - AA_MARGIN - max(2, S(2))
-            item = self.create_rectangle(x1, y1, x2, self._rh - AA_MARGIN,
-                                         fill=pal["accent"], width=0, tags=("bg",))
+        if HAS_PIL:
+            w = self._rw - 2 * AA_MARGIN
+            h = self._rh - 2 * AA_MARGIN
+            self._resize(self._rw, self._rh)
+            photo = rounded_photo(self, w, h, S(12), fill=None,
+                                  outline=outline, outline_width=1)
+            item = self.create_image(self._rw / 2.0, self._rh / 2.0, image=photo,
+                                     anchor="center", tags=("bg",))
+        else:
+            item = self._round(None, outline, pill=False)
+            self.addtag_withtag("bg", item)
         if item is not None:
             self.tag_lower(item)
 
@@ -2064,8 +2094,8 @@ class ChatViewerApp:
                                       tooltip="显示 / 隐藏消息列表",
                                       command=self.toggle_sidebar)
         self.btn_sidebar.pack(side="right", padx=(S(4), S(4)), pady=S(9))
-        self.btn_theme = FlatButton(bar, self.theme, icon="moon", variant="ghost",
-                                    tooltip="切换深色 / 浅色主题",
+        self.btn_theme = FlatButton(bar, self.theme, icon="theme", variant="ghost",
+                                    tooltip="切换月白 / 暖沙主题",
                                     command=self.toggle_theme)
         self.btn_theme.pack(side="right", padx=S(3), pady=S(9))
         self._toolbar_sep(bar, gap=S(8))
@@ -2157,8 +2187,8 @@ class ChatViewerApp:
                                  text="就绪")
         self.lbl_status.pack(side="left", pady=S(6))
 
-        self.lbl_saved = Chip(bar, self.theme, text="", bg_key="accent_soft",
-                              fg_key="accent_text", font=self.fonts.tiny)
+        self.lbl_saved = Chip(bar, self.theme, text="", bg_key="ai_soft",
+                              fg_key="ai_text", font=self.fonts.tiny)
         self.lbl_info = TLabel(bar, self.theme, bg_key="surface", fg_key="text_3",
                                font=self.fonts.small)
         self.lbl_info.pack(side="right", padx=(S(10), S(18)), pady=S(6))
@@ -2294,12 +2324,8 @@ class ChatViewerApp:
         self.art.pack(pady=(0, S(20)))
         self.theme.subscribe(self._draw_art)
 
-        TLabel(box, self.theme, text="SILLYTAVERN  ·  CHAT EXPORT",
-               bg_key="bg", fg_key="text_3",
-               font=(self.fonts.mono, 8)).pack()
-
         TLabel(box, self.theme, text="把对话摊开来读", bg_key="bg", fg_key="text",
-               font=(self.fonts.family, 21, "bold")).pack(pady=(S(9), S(7)))
+               font=(self.fonts.family, 20)).pack(pady=(S(4), S(7)))
 
         if HAS_DND:
             subtitle = "拖入酒馆导出的 JSON，或从文件夹里挑一份"
@@ -2358,18 +2384,18 @@ class ChatViewerApp:
         canvas = self.art
         canvas.configure(bg=pal["bg"])
         canvas.delete("all")
-        # 文档卡片
+        # 文档卡片（发丝级描边，KM 只留一条细线）
         rounded_rect(canvas, S(12), S(8), S(140), S(100), S(14),
-                     fill=pal["surface_2"], outline=pal["border_strong"], width=S(2))
+                     fill=pal["surface_2"], outline=pal["border_strong"], width=S(1))
         for y, right in ((S(28), S(108)), (S(42), S(118)), (S(56), S(92))):
             rounded_rect(canvas, S(26), y, right, y + S(4), S(2),
                          fill=pal["border_strong"], outline="")
-        # 引号高亮：荧光笔式的横条压在被强调的那一行下面
+        # 引号高亮：沙色荧光条压在被强调的那一行下面
         rounded_rect(canvas, S(24), S(61), S(86), S(68), S(3),
-                     fill=_hex_mix(pal["accent_soft"], pal["accent"], 0.55), outline="")
-        # 对话气泡
+                     fill=pal["hl_cur"], outline="")
+        # 对话气泡（鼠尾草粉彩）
         rounded_rect(canvas, S(56), S(76), S(186), S(130), S(18),
-                     fill=pal["user_soft"], outline=pal["user"], width=S(2))
+                     fill=pal["user_soft"], outline=pal["user"], width=S(1))
         for x in (S(80), S(98), S(116)):
             canvas.create_oval(x, S(99), x + S(9), S(108), fill=pal["user"], outline="")
 
@@ -2586,7 +2612,7 @@ class ChatViewerApp:
         area.tag_configure("num", font=self.fonts.small_bold, foreground=pal["text_3"],
                            spacing1=S(5), spacing3=S(5))
         area.tag_configure("prev", font=self.fonts.small, foreground=pal["text_2"])
-        area.tag_configure("prev_edited", font=self.fonts.small_bold, foreground=pal["accent_text"])
+        area.tag_configure("prev_edited", font=self.fonts.small, foreground=pal["ai_text"])
         area.tag_configure("empty", font=self.fonts.small, foreground=pal["text_3"],
                            justify="center", spacing1=S(24))
         for key in ("user", "ai", "sys", "other"):
@@ -2594,7 +2620,7 @@ class ChatViewerApp:
         area.tag_configure("hover", background=pal["surface_2"])
         area.tag_configure("sel", background=pal["accent_soft"])
         area.tag_configure("sel_num", font=self.fonts.small_bold, foreground=pal["accent_text"])
-        area.tag_configure("fork", font=self.fonts.small_bold, foreground=pal["accent_text"])
+        area.tag_configure("fork", font=self.fonts.small, foreground=pal["ai_text"])
 
     def _apply_font_dependent_styles(self):
         pal = self.theme.pal
@@ -2889,7 +2915,7 @@ class ChatViewerApp:
                 if idx in self.edited:
                     area.window_create("end", window=Chip(
                         area, self.theme, text="已修改", on_key="bg",
-                        bg_key="accent_soft", fg_key="accent_text", font=self.fonts.chip),
+                        bg_key="ai_soft", fg_key="ai_text", font=self.fonts.chip),
                         padx=S(6))
                 fork = msg.get("_fork")
                 if fork:
@@ -2899,7 +2925,7 @@ class ChatViewerApp:
                     except ValueError:
                         pos = 1
                     chip = Chip(area, self.theme, text="分支 %d/%d" % (pos, len(options)),
-                                on_key="bg", bg_key="accent_soft", fg_key="accent_text",
+                                on_key="bg", bg_key="ai_soft", fg_key="ai_text",
                                 font=self.fonts.chip)
                     chip.configure(cursor="hand2")
                     chip.bind("<Button-1>",
@@ -3923,10 +3949,10 @@ class ChatViewerApp:
         self._refresh_theme_button()
         self._apply_titlebar()
         save_settings(self.settings)
-        self._set_status("已切换到%s主题" % ("深色" if name == "dark" else "浅色"))
+        self._set_status("已切换到%s主题" % ("暖沙" if name == "dark" else "月白"))
 
     def _refresh_theme_button(self):
-        self.btn_theme.set_icon("moon" if self.theme.name == "light" else "sun")
+        self.btn_theme.set_icon("theme")
 
     def _top_hwnd(self):
         """Tk 子窗口句柄不是顶层 HWND，标题栏属性必须设在 wm frame 上。"""
@@ -3936,7 +3962,7 @@ class ChatViewerApp:
             return None
 
     def _apply_titlebar(self):
-        """Windows 10/11 下让原生标题栏跟随深色主题。"""
+        """Windows 10/11 标题栏：两套主题均为浅色，标题栏保持浅色 + 圆角。"""
         if sys.platform != "win32":
             return
         hwnd = self._top_hwnd()
@@ -3944,7 +3970,7 @@ class ChatViewerApp:
             return
         try:
             import ctypes
-            dark = 1 if self.theme.name == "dark" else 0
+            dark = 0
             value = ctypes.c_int(dark)
             for attr in (20, 19):  # Win10 2004+ 用 20，早期版本用 19
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(

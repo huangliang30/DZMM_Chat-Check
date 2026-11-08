@@ -2929,8 +2929,8 @@ class ChatViewerApp:
                                 font=self.fonts.chip)
                     chip.configure(cursor="hand2")
                     chip.bind("<Button-1>",
-                              lambda _e, i=idx, w=chip: self._show_branch_menu(i, w))
-                    Tooltip(chip, self.theme, "点击选择要查看的分支")
+                              lambda _e, i=idx, w=chip: self._show_branch_tree(i, w))
+                    Tooltip(chip, self.theme, "点击查看分支树")
                     area.window_create("end", window=chip, padx=S(6))
                     area.window_create("end", window=FlatButton(
                         area, self.theme, icon="chevron_left", variant="ghost",
@@ -3560,6 +3560,257 @@ class ChatViewerApp:
         self._set_status("已导出 %d 条消息 → %s" % (len(self.visible), os.path.basename(path)))
 
     # ══════════════════════════ 对话分支 ══════════════════════════
+    def _branch_tree_data(self):
+        """收集整棵 chunk 分支树的展示数据（树状图用）。
+
+        返回 {"nodes": {id: {...}}, "path": set(当前展示路径), "roots": [...]}；
+        每个 node 含 parent / children(id 列表，保序) / active / own_count /
+        total(子树消息数) / preview。无 chunk 树时返回 None。
+        """
+        if not self.chat_data:
+            return None
+        chat = self.chat_data["raw"].get("chat", {}) or {}
+        chunks = chat.get("chunks") or []
+        if not chunks:
+            return None
+
+        raw_by_id = {c.get("id"): c for c in chunks
+                     if isinstance(c, dict) and "id" in c}
+        nodes = {}
+        for c in chunks:
+            if isinstance(c, dict) and "id" in c:
+                nodes[c["id"]] = {
+                    "id": c["id"],
+                    "parent": c.get("parent"),
+                    "children": [k for k in (c.get("children") or [])
+                                 if k in raw_by_id],
+                    "active": bool(c.get("active", False)),
+                    "own_count": 0,
+                    "total": 0,
+                    "preview": "",
+                }
+
+        msgs_map = {}
+        for block in self.chat_data["raw"].get("messages", []) or []:
+            msgs_map[block.get("chunk_id", "")] = block.get("messages", []) or []
+        for node in nodes.values():
+            own = msgs_map.get(node["id"], [])
+            node["own_count"] = len(own)
+            for m in own:
+                text = (m.get("content") or "").strip()
+                if text:
+                    node["preview"] = ellipsis(text, 20)
+                    break
+
+        memo = {}
+
+        def subtree_total(cid):
+            if cid in memo:
+                return memo[cid]
+            total = nodes[cid]["own_count"]
+            for kid in nodes[cid]["children"]:
+                total += subtree_total(kid)
+            memo[cid] = total
+            return total
+
+        def effective_total(cid):
+            """跳到该节点实际会读到的消息数：自身 + 沿当前选择链的后续。"""
+            node = nodes[cid]
+            total = node["own_count"]
+            kids = node["children"]
+            if kids:
+                want = self.branch_overrides.get(cid)
+                nxt = want if want in kids else None
+                if nxt is None:
+                    nxt = next((k for k in kids if nodes[k]["active"]), None)
+                if nxt is None:
+                    nxt = kids[0]
+                total += effective_total(nxt)
+            return total
+
+        for cid in nodes:
+            nodes[cid]["total"] = effective_total(cid)
+
+        roots = [cid for cid, node in nodes.items()
+                 if node["parent"] is None or node["parent"] not in nodes]
+
+        # 当前展示路径：根 → 每个分叉处按 overrides / active 选出的子节点
+        path = set()
+        cur = roots[0] if roots else None
+        while cur is not None:
+            path.add(cur)
+            kids = nodes[cur]["children"]
+            if not kids:
+                break
+            want = self.branch_overrides.get(cur)
+            nxt = want if want in kids else None
+            if nxt is None:
+                nxt = next((k for k in kids if nodes[k]["active"]), None)
+            cur = nxt if nxt is not None else (kids[0] if kids else None)
+
+        return {"nodes": nodes, "path": path, "roots": roots}
+
+    def _jump_to_branch_node(self, node_id):
+        """跳转到树状图里点选的节点：沿路径写入走向，重渲染并定位。"""
+        if not self.chat_data or not node_id:
+            return
+        if self.edited:
+            self._set_status("有未保存的修改，切换分支前请先保存（Ctrl+S）")
+            return
+        tree = self._branch_tree_data()
+        if not tree or node_id not in tree["nodes"]:
+            return
+        nodes = tree["nodes"]
+        # 从目标节点向上回溯：沿途每个多子节点写入「走向该节点」的选择，
+        # 整体替换 overrides——展示的就是 root → 目标节点这条路径
+        overrides = {}
+        cur = node_id
+        while cur is not None:
+            node = nodes.get(cur)
+            if node is None:
+                break
+            parent = node["parent"]
+            if (parent is not None and parent in nodes
+                    and len(nodes[parent]["children"]) > 1):
+                overrides[parent] = cur
+            cur = parent
+        self.branch_overrides = overrides
+        self.chat_data = extract_messages(self.chat_data["raw"], self.branch_overrides)
+        self.messages = self.chat_data["messages"]
+        self.refresh_display()
+        sub = set()
+        stack = [node_id]
+        while stack:
+            cid = stack.pop()
+            if cid in sub:
+                continue
+            sub.add(cid)
+            stack.extend(nodes[cid]["children"])
+        target = None
+        for msg in self.messages:
+            if msg.get("_chunk_id") in sub:
+                target = msg["_index"]
+                break
+        if target is not None:
+            self._scroll_to_message(target)
+            self._flash_block(target)
+        self._refresh_status_counts()
+        self._set_status("已跳转到所选分支 · 共 %d 条消息" % len(self.messages))
+
+    def _show_branch_tree(self, idx, widget):
+        """点击分支芯片：弹出树状图（整棵分支树），点选任意节点直达。"""
+        if not self.chat_data:
+            return
+        if self.edited:
+            self._set_status("有未保存的修改，切换分支前请先保存（Ctrl+S）")
+            return
+        tree = self._branch_tree_data()
+        if not tree:
+            return
+        nodes = tree["nodes"]
+        path = tree["path"]
+        fork = None
+        if idx is not None and idx < len(self.messages):
+            fork = self.messages[idx].get("_fork")
+        marked = fork["current"] if fork else None
+
+        pal = self.theme.pal
+        tip = tk.Toplevel(self.root)
+        tip.wm_overrideredirect(True)
+        try:
+            tip.attributes("-topmost", True)
+        except Exception:
+            pass
+        tip.configure(bg=pal["border_strong"])
+
+        text = tk.Text(tip, wrap="none", bd=0, relief="flat", font=self.fonts.small,
+                       bg=pal["surface"], fg=pal["text"], insertwidth=0,
+                       padx=S(12), pady=S(10), cursor="hand2",
+                       highlightthickness=1,
+                       highlightbackground=pal["border_strong"],
+                       highlightcolor=pal["border_strong"])
+
+        def close_tree(_event=None):
+            try:
+                text.grab_release()
+                tip.grab_release()
+                tip.destroy()
+            except Exception:
+                pass
+            return "break"
+
+        lines = []
+
+        def emit_line(cid, connector, prefix):
+            node = nodes[cid]
+            if node["own_count"]:
+                label = "%s · %d 条" % (node["preview"], node["total"])
+            else:
+                label = "%d 条" % node["total"]
+            if cid == marked:
+                mark, base_tag = "● ", "cur"
+            elif cid in path:
+                mark, base_tag = "○ ", "onpath"
+            else:
+                mark, base_tag = "○ ", "off"
+            lines.append((prefix + connector + mark + label,
+                          (base_tag, "node", "node_%s" % cid)))
+
+        def walk(cid, prefix, connector):
+            emit_line(cid, connector, prefix)
+            kids = nodes[cid]["children"]
+            for i, kid in enumerate(kids):
+                last = (i == len(kids) - 1)
+                walk(kid, prefix + ("   " if last else "│  "),
+                     "└─ " if last else "├─ ")
+
+        for root_id in tree["roots"]:
+            walk(root_id, "", "")
+
+        text.tag_configure("cur", foreground=pal["ai_text"],
+                           font=self.fonts.small_bold)
+        text.tag_configure("onpath", foreground=pal["text"])
+        text.tag_configure("off", foreground=pal["text_2"])
+        text.tag_configure("hdr", foreground=pal["text_3"])
+        text.insert("end", "分支树 · 点击节点直达\n", ("hdr",))
+        for line_text, tags in lines:
+            text.insert("end", line_text + "\n", tags)
+        for _line_text, tags in lines:
+            node_tag = next(t for t in tags if t.startswith("node_"))
+            cid = node_tag[len("node_"):]
+            text.tag_bind(node_tag, "<Button-1>",
+                          lambda _e, nid=cid: (close_tree(),
+                                               self._jump_to_branch_node(nid)))
+        text.configure(state="disabled", width=44,
+                       height=min(max(len(lines) + 1, 4), 18))
+        text.pack(fill="both", expand=True, padx=1, pady=1)
+
+        def on_press(event):
+            # 点在弹窗外（grab 使所有点击都落到本窗口）→ 关闭
+            if 0 <= event.x <= tip.winfo_width() and 0 <= event.y <= tip.winfo_height():
+                return
+            close_tree()
+
+        tip.bind("<Button-1>", on_press, add="+")
+        tip.bind("<Escape>", close_tree, add="+")
+
+        try:
+            tip.update_idletasks()
+            w = tip.winfo_reqwidth()
+            h = tip.winfo_reqheight()
+            x = widget.winfo_rootx() + (widget.winfo_width() - w) // 2
+            y = widget.winfo_rooty() + widget.winfo_height() + S(5)
+            screen_w = widget.winfo_screenwidth()
+            screen_h = widget.winfo_screenheight()
+            x = max(S(4), min(x, screen_w - w - S(4)))
+            if y + h > screen_h - S(8):
+                y = widget.winfo_rooty() - h - S(5)
+            tip.wm_geometry("+%d+%d" % (x, y))
+        except Exception:
+            pass
+        tip.grab_set()
+
+    # ══════════════════════════ 对话分支：切换 / 树状图 ══════════════════════════
     def switch_branch(self, idx, delta):
         """在有分支的消息处切换到上 / 下一个分支（swipe 式查看）。"""
         if not self.chat_data or idx is None or idx >= len(self.messages):
@@ -3601,42 +3852,6 @@ class ChatViewerApp:
         self._refresh_status_counts()
         self._set_status("已切换到第 %d/%d 分支 · 共 %d 条消息"
                          % (new_pos + 1, len(options), len(self.messages)))
-
-    def _build_branch_menu(self, idx):
-        """构建分支下拉菜单：列出全部分支（含首句预览），当前分支加圆点标记。"""
-        if idx is None or idx >= len(self.messages):
-            return None
-        fork = self.messages[idx].get("_fork")
-        if not fork:
-            return None
-        options = fork["options"]
-        previews = fork.get("previews") or [""] * len(options)
-        menu = tk.Menu(self.root, tearoff=0, font=self.fonts.ui)
-        for i, cid in enumerate(options):
-            mark = (DOT + " ") if cid == fork["current"] else "    "
-            menu.add_command(
-                label="%s分支 %d/%d · %s" % (mark, i + 1, len(options), previews[i]),
-                command=lambda i=i: self._apply_branch(idx, i))
-        pal = self.theme.pal
-        menu.configure(
-            bg=pal["surface"], fg=pal["text"],
-            activebackground=pal["accent_soft"], activeforeground=pal["accent"],
-            disabledforeground=pal["text_3"], borderwidth=0, relief="flat",
-            selectcolor=pal["accent"])
-        return menu
-
-    def _show_branch_menu(self, idx, widget):
-        if self.edited:
-            self._set_status("有未保存的修改，切换分支前请先保存（Ctrl+S）")
-            return
-        menu = self._build_branch_menu(idx)
-        if menu is None:
-            return
-        try:
-            menu.tk_popup(widget.winfo_rootx(),
-                          widget.winfo_rooty() + widget.winfo_height())
-        finally:
-            menu.grab_release()
 
     # ══════════════════════════ 搜索 / 筛选 ══════════════════════════
     def _search_term(self):

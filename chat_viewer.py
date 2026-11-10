@@ -152,6 +152,12 @@ PALETTES = {
         "sys_soft":      "#f5efe2",
         "sys_text":      "#74633f",
         "other":         "#6e5a6a",
+        "tool":          "#8a5c36",
+        "tool_soft":     "#f6eee2",
+        "tool_text":     "#8a5c36",
+        "tool":          "#8a5c36",
+        "tool_soft":     "#f6eee2",
+        "tool_text":     "#8a5c36",
         "other_soft":    "#f2edf2",
         "other_text":    "#6e5a6a",
         "danger":        "#8f534e",
@@ -3605,6 +3611,8 @@ class ChatViewerApp:
         for node in nodes.values():
             own = msgs_map.get(node["id"], [])
             node["own_count"] = len(own)
+            node["messages"] = own
+            node["role"] = (own[0].get("role") or "") if own else ""
             for m in own:
                 text = (m.get("content") or "").strip()
                 if text:
@@ -3722,295 +3730,23 @@ class ChatViewerApp:
         self._set_status("已跳转到所选分支 · 共 %d 条消息" % len(self.messages))
 
     def _show_branch_tree(self, idx, widget):
-        """点击分支芯片：弹出图形化分支树（悬浮窗），点选任意节点直达。
-
-        横向组织结构图：根在左，分支向右展开，父到子用平滑贝塞尔曲线；
-        滚轮缩放（0.12x - 1.8x，光标为锚点），打开时自适应全览并居中当前
-        所在节点；单子链折叠进连线，只画分叉与叶子。
-        """
+        """点击悬浮分支按钮：打开对话树导航与探索工具（悬浮窗）。"""
         if not self.chat_data:
             return
         if self.edited:
             self._set_status("有未保存的修改，切换分支前请先保存（Ctrl+S）")
             return
-        tree = self._branch_tree_data()
-        if not tree:
+        viewer = getattr(self, "_tree_viewer", None)
+        if viewer is not None and viewer.winfo_exists():
+            viewer.lift()
+            viewer.focus_set()
             return
-        nodes = tree["nodes"]
-        path = tree["path"]
-        fork = None
-        if idx is not None and idx < len(self.messages):
-            fork = self.messages[idx].get("_fork")
-        marked = fork["current"] if fork else None
-
-        pal = self.theme.pal
-        tip = tk.Toplevel(self.root)
-        tip.wm_overrideredirect(True)
         try:
-            tip.attributes("-topmost", True)
+            self._tree_viewer = BranchTreeViewer(self, widget, idx)
         except Exception:
-            pass
-        tip.configure(bg=pal["surface"])
+            self._tree_viewer = None
+            raise
 
-        fobj = tkfont.Font(root=self.root, font=self.fonts.small)
-        BASE_DOT_R = 4.0
-        ROW_H = S(30)
-        COL_GAP = S(26)
-        MARGIN = S(16)
-
-        # 显示树：跳过单子链（纯延续段落不画节点），分叉与叶子才成节点
-        resolved = {}
-
-        def display_children(cid):
-            if cid in resolved:
-                return resolved[cid]
-            kids = nodes[cid]["children"]
-            if len(kids) != 1:
-                out = list(kids)
-            else:
-                out = display_children(kids[0])
-            resolved[cid] = out
-            return out
-
-        def label_of(cid):
-            node = nodes[cid]
-            return node["preview"] or "（%d 条）" % node["total"]
-
-        col_max = {}
-
-        def collect(cid, depth):
-            col_max[depth] = max(col_max.get(depth, 0),
-                                 fobj.measure(label_of(cid)) + 2 * BASE_DOT_R + S(12))
-            for kid in display_children(cid):
-                collect(kid, depth + 1)
-
-        for root_id in tree["roots"]:
-            collect(root_id, 0)
-        if not col_max:
-            return
-        max_depth = max(col_max)
-
-        xs = []
-        x = MARGIN
-        for depth in range(max_depth + 1):
-            xs.append(x)
-            x += col_max.get(depth, S(40)) + COL_GAP
-        content_w = xs[max_depth] + col_max.get(max_depth, S(40)) + MARGIN
-
-        pos = {}
-        y_cursor = [MARGIN]
-
-        def place(cid, depth):
-            kids = display_children(cid)
-            if not kids:
-                y = y_cursor[0]
-                y_cursor[0] += ROW_H
-            else:
-                ys = [place(k, depth + 1) for k in kids]
-                y = (min(ys) + max(ys)) / 2.0
-            pos[cid] = (xs[depth], y)
-            return y
-
-        for root_id in tree["roots"]:
-            place(root_id, 0)
-        content_h = y_cursor[0] - ROW_H + BASE_DOT_R + MARGIN
-
-        # 当前路径最深节点（无点击芯片时作为「我在这」）
-        focus_id = marked
-        if focus_id is None and tree["roots"]:
-            deepest = None
-            cur = tree["roots"][0]
-            while cur is not None and cur in path:
-                deepest = cur
-                kids = nodes[cur]["children"]
-                if not kids:
-                    break
-                want = self.branch_overrides.get(cur)
-                nxt = want if want in kids else None
-                if nxt is None:
-                    nxt = next((k for k in kids if nodes[k]["active"]), None)
-                cur = nxt if nxt is not None else (kids[0] if kids else None)
-            focus_id = deepest
-
-        TLabel(tip, self.theme, text="对话分支树 · 滚轮缩放 · 点击节点直达",
-               bg_key="surface", fg_key="text_3", font=self.fonts.tiny).pack(
-            anchor="w", padx=S(12), pady=(S(8), S(4)))
-        body = tk.Frame(tip, bg=pal["surface"])
-        body.pack(fill="both", expand=True)
-
-        canvas = tk.Canvas(body, bd=0, relief="flat", highlightthickness=1,
-                           highlightbackground=pal["border_strong"],
-                           highlightcolor=pal["border_strong"],
-                           bg=pal["surface"])
-        WIN_W = S(640)
-        WIN_H = S(440)
-        win_w, win_h = WIN_W, WIN_H
-        canvas.configure(width=win_w, height=win_h)
-        canvas.pack(fill="both")
-
-        state = {"z": 1.0}
-
-        def redraw():
-            z = state["z"]
-            canvas.delete("all")
-            sw = max(1.0, content_w * z)
-            sh = max(1.0, content_h * z)
-            canvas.configure(scrollregion=(0, 0, sw, sh))
-            dot_r = max(2.0, BASE_DOT_R * z)
-            stroke = max(1, int(round(1.1 * z)))
-            if z >= 0.8:
-                font = self.fonts.small
-            elif z >= 0.45:
-                font = (self.fonts.family, 7)
-            else:
-                font = (self.fonts.family, 6)
-            show_labels = z >= 0.4
-
-            def draw_edges(cid):
-                dx, dy = pos[cid]
-                dx, dy = dx * z, dy * z
-                on = cid in path
-                for kid in display_children(cid):
-                    kx, ky = pos[kid]
-                    kx, ky = kx * z, ky * z
-                    mx = dx + (kx - dx) / 2.0
-                    line_color = (_hex_mix(pal["surface"], pal["text"], 0.38)
-                                  if on and kid in path else pal["border_strong"])
-                    canvas.create_line(dx + dot_r, dy, mx, dy, kx - dot_r, ky,
-                                       smooth=True, width=stroke, fill=line_color)
-                    draw_edges(kid)
-
-            def draw_nodes(cid):
-                dx, dy = pos[cid]
-                dx, dy = dx * z, dy * z
-                on = cid in path
-                is_cur = cid == marked
-                tag = "n_%s" % cid
-                if is_cur:
-                    fill, outline = pal["ai_text"], ""
-                elif on:
-                    fill, outline = pal["surface"], pal["text"]
-                else:
-                    fill, outline = pal["surface"], pal["border_strong"]
-                canvas.create_oval(dx - dot_r, dy - dot_r, dx + dot_r, dy + dot_r,
-                                   fill=fill, outline=outline, width=S(1), tags=tag)
-                if show_labels or is_cur:
-                    label_color = (pal["ai_text"] if is_cur
-                                   else (pal["text"] if on else pal["text_2"]))
-                    font = self.fonts.small_bold if is_cur else font
-                    label = canvas.create_text(dx + dot_r + S(8), dy, anchor="w",
-                                               text=label_of(cid), font=font,
-                                               fill=label_color, tags=tag)
-                    if not is_cur:
-                        canvas.tag_bind(tag, "<Enter>",
-                                        lambda _e, l=label: canvas.itemconfigure(
-                                            l, fill=pal["accent_hover"]))
-                        canvas.tag_bind(tag, "<Leave>",
-                                        lambda _e, l=label, c=label_color:
-                                        canvas.itemconfigure(l, fill=c))
-                canvas.tag_bind(tag, "<Button-1>",
-                                lambda _e, nid=cid: (close_tree(),
-                                                     self._jump_to_branch_node(nid)))
-                for kid in display_children(cid):
-                    draw_nodes(kid)
-
-            for root_id in tree["roots"]:
-                draw_edges(root_id)
-            for root_id in tree["roots"]:
-                draw_nodes(root_id)
-
-        def close_tree(_event=None):
-            try:
-                canvas.grab_release()
-                tip.grab_release()
-                tip.destroy()
-            except Exception:
-                pass
-            return "break"
-
-        def clamp_view():
-            sw = max(1.0, content_w * state["z"])
-            sh = max(1.0, content_h * state["z"])
-            xfrac = canvas.xview()[0]
-            yfrac = canvas.yview()[0]
-            canvas.xview_moveto(max(0.0, min(xfrac, max(0.0, 1.0 - win_w / sw))))
-            canvas.yview_moveto(max(0.0, min(yfrac, max(0.0, 1.0 - win_h / sh))))
-
-        last_serial = {"n": 0}
-
-        def on_wheel(event):
-            # Windows 把滚轮投递给焦点窗口：弹窗取焦点后事件落在 tip 上，
-            # 再按 x_root 统一换算成 canvas 内容坐标；serial 去重防多层绑定
-            if getattr(event, "serial", 0) == last_serial["n"]:
-                return "break"
-            last_serial["n"] = getattr(event, "serial", 0)
-            delta = getattr(event, "delta", 0)
-            if not delta:
-                return "break"
-            factor = 1.15 if delta > 0 else 1.0 / 1.15
-            old_z = state["z"]
-            new_z = max(0.12, min(1.8, old_z * factor))
-            if abs(new_z - old_z) < 1e-6:
-                return "break"
-            bcx = canvas.canvasx(event.x_root - canvas.winfo_rootx()) / old_z
-            bcy = canvas.canvasy(event.y_root - canvas.winfo_rooty()) / old_z
-            state["z"] = new_z
-            redraw()
-            sw = max(1.0, content_w * new_z)
-            sh = max(1.0, content_h * new_z)
-            canvas.xview_moveto(max(0.0, min(1.0 - win_w / sw,
-                                             bcx * new_z / sw)))
-            canvas.yview_moveto(max(0.0, min(1.0 - win_h / sh,
-                                             bcy * new_z / sh)))
-            return "break"
-
-        def on_press(event):
-            # grab 使所有点击都落到本窗口：点在窗外即关闭
-            if 0 <= event.x <= tip.winfo_width() and 0 <= event.y <= tip.winfo_height():
-                return
-            close_tree()
-
-        tip.bind("<Button-1>", on_press, add="+")
-        tip.bind("<Escape>", close_tree, add="+")
-        tip.bind("<MouseWheel>", on_wheel, add="+")
-        body.bind("<MouseWheel>", on_wheel, add="+")
-        canvas.bind("<MouseWheel>", on_wheel, add="+")
-
-        # 初始缩放：优先全览（fit），过小时钳到 0.12；居中到当前节点
-        fit = min(WIN_W / max(1.0, content_w), WIN_H / max(1.0, content_h))
-        state["z"] = max(0.12, min(1.0, fit))
-        redraw()
-        if focus_id and focus_id in pos:
-            fx, fy = pos[focus_id]
-            fx = fx * state["z"] - win_w / 2.0
-            fy = fy * state["z"] - win_h / 2.0
-            sw = max(1.0, content_w * state["z"])
-            sh = max(1.0, content_h * state["z"])
-            canvas.xview_moveto(max(0.0, min(1.0 - win_w / sw, fx / sw)))
-            canvas.yview_moveto(max(0.0, min(1.0 - win_h / sh, fy / sh)))
-        clamp_view()
-
-        try:
-            tip.update_idletasks()
-            w = tip.winfo_reqwidth()
-            h = tip.winfo_reqheight()
-            x = widget.winfo_rootx() + (widget.winfo_width() - w) // 2
-            y = widget.winfo_rooty() + widget.winfo_height() + S(5)
-            screen_w = widget.winfo_screenwidth()
-            screen_h = widget.winfo_screenheight()
-            x = max(S(4), min(x, screen_w - w - S(4)))
-            if y + h > screen_h - S(8):
-                y = widget.winfo_rooty() - h - S(5)
-            tip.wm_geometry("+%d+%d" % (x, y))
-        except Exception:
-            pass
-        tip.grab_set()
-        try:
-            tip.focus_set()
-        except Exception:
-            pass
-
-    # ══════════════════════════ 对话分支：切换 / 树状图 ══════════════════════════
     # ══════════════════════════ 搜索 / 筛选 ══════════════════════════
     def _search_term(self):
         try:
@@ -4442,6 +4178,884 @@ class ChatViewerApp:
 # ══════════════════════════════════════════════════════════════════════════
 #  入口
 # ══════════════════════════════════════════════════════════════════════════
+class BranchTreeViewer(tk.Toplevel):
+    """对话分支树导航与探索工具。
+
+    顶部工具栏（标题 / 统计 / 搜索 / 布局 / 折叠 / 适应 / 缩放）+ 中央画布
+    （卡片式节点、贝塞尔连线、平移缩放拖拽）+ 右侧详情面板 + 角落小地图。
+    视图状态（缩放 / 折叠 / 布局 / 拖拽位置）独立于聊天数据，不写回文件。
+    """
+
+    ROLE_KEY = {"user": "user", "assistant": "ai", "system": "sys", "tool": "tool"}
+    LAYOUTS = ("横向", "树状", "紧凑")
+
+    def __init__(self, app, anchor_widget, idx):
+        super().__init__(app.root)
+        self.app = app
+        self.theme = app.theme
+        self.pal = app.theme.pal
+        self.fonts = app.fonts
+        self._layout_mode = "横向"
+        self._folded = set()
+        self._drag_pos = {}
+        self._selected = None
+        self._search_hits = []
+        self._search_pos = -1
+        self._zoom = 1.0
+        self._anim_job = None
+        self._drag = None
+        self._card_rects = []
+
+        data = app._branch_tree_data()
+        if not data:
+            raise ValueError("当前文件没有 chunk 分支树")
+        self.nodes = data["nodes"]
+        self.path = data["path"]
+        self._roots = data["roots"]
+        self._chat_title = display_title(app.chat_data, app.current_file)
+        self._model = app.chat_data.get("model") or ""
+        self.role_counts = {}
+        for node in self.nodes.values():
+            for m in node["messages"]:
+                r = (m.get("role") or "unknown").strip() or "unknown"
+                self.role_counts[r] = self.role_counts.get(r, 0) + 1
+        self._branch_count = sum(1 for n in self.nodes.values()
+                                 if len(n["children"]) >= 2)
+        self._max_depth = self._max_display_depth()
+        self._selected = self._initial_focus(idx)
+
+        self.wm_title("对话分支树 · %s" % ellipsis(self._chat_title, 24))
+        try:
+            self.attributes("-topmost", True)
+        except Exception:
+            pass
+        self.configure(bg=self.pal["surface"])
+        # 固定窗口尺寸：避免工具栏最小宽度把窗口撑大，导致居中基准漂移
+        self.pack_propagate(False)
+
+        self._build_toolbar()
+        self._build_canvas()
+        self._build_detail()
+        self._apply_layout()
+        self._update_stats()
+        self._show_detail(self._selected)
+
+        w, h = S(1180), S(660)
+        self._win_w, self._win_h = w, h
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        x, y = max(0, (sw - w) // 2), max(0, (sh - h) // 3)
+        if anchor_widget is not None and anchor_widget.winfo_exists():
+            ax = (anchor_widget.winfo_rootx()
+                  + anchor_widget.winfo_width() // 2 - w // 2)
+            x = max(0, min(ax, sw - w - S(8)))
+        self.wm_geometry("%dx%d+%d+%d" % (w, h, x, y))
+        # 完成映射后再绘制与定位：winfo_width 才能拿到真实画布宽度
+        self.update_idletasks()
+        try:
+            self.update()
+        except Exception:
+            pass
+        self._redraw()
+        if self._selected:
+            self._center(self._selected)
+        self.grab_set()
+        try:
+            self.focus_set()
+        except Exception:
+            pass
+        self.bind("<Escape>", lambda e: self.close())
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.theme.subscribe(self._on_theme)
+
+    # ── 数据 ──
+    def _max_display_depth(self):
+        deepest = 0
+        stack = [(r, 0) for r in self._roots]
+        while stack:
+            cid, d = stack.pop()
+            deepest = max(deepest, d)
+            for k in self.nodes[cid]["children"]:
+                stack.append((k, d + 1))
+        return deepest
+
+    def _initial_focus(self, idx):
+        if idx is not None and idx < len(self.app.messages):
+            fork = self.app.messages[idx].get("_fork")
+            if fork:
+                return fork["current"]
+        deepest = None
+        cur = self._roots[0] if self._roots else None
+        while cur is not None and cur in self.path:
+            deepest = cur
+            kids = self.nodes[cur]["children"]
+            if not kids:
+                break
+            want = self.app.branch_overrides.get(cur)
+            nxt = want if want in kids else None
+            if nxt is None:
+                nxt = next((k for k in kids if self.nodes[k]["active"]), None)
+            cur = nxt if nxt is not None else (kids[0] if kids else None)
+        return deepest
+
+    def _display_children(self, cid):
+        """折叠：被折叠节点视为叶子（子树隐藏，卡片显示折叠条数）。"""
+        if cid in self._folded:
+            return []
+        return self.nodes[cid]["children"]
+
+    def _hidden_count(self, cid):
+        total, stack = 0, list(self.nodes[cid]["children"])
+        while stack:
+            k = stack.pop()
+            total += self.nodes[k]["own_count"]
+            stack.extend(self.nodes[k]["children"])
+        return total
+
+    # ── 工具栏 ──
+    def _build_toolbar(self):
+        pal = self.pal
+        bar = TFrame(self, self.theme, bg_key="surface")
+        bar.pack(side="top", fill="x")
+        self._title_label = TLabel(bar, self.theme, bg_key="surface", fg_key="text",
+                                   font=self.fonts.small,
+                                   text=ellipsis(self._chat_title, 16))
+        self._title_label.pack(side="left", padx=(S(12), S(6)), pady=S(6))
+        self._stats_label = TLabel(bar, self.theme, bg_key="surface", fg_key="text_3",
+                                   font=self.fonts.tiny, text="")
+        self._stats_label.pack(side="left", padx=(0, S(6)))
+
+        self._search_var = tk.StringVar()
+        self._search_entry = tk.Entry(bar, textvariable=self._search_var, width=16,
+                                      font=self.fonts.small, relief="flat", bd=0,
+                                      highlightthickness=S(1),
+                                      highlightbackground=pal["border_strong"],
+                                      highlightcolor=pal["border_strong"],
+                                      bg=pal["surface"], fg=pal["text"],
+                                      insertbackground=pal["accent"])
+        self._search_entry.pack(side="left", ipady=S(3), padx=(S(8), 0))
+        self._search_entry.bind("<Return>", lambda e: self._search_step(1))
+        self._search_var.trace_add("write", lambda *_: self._on_search_change())
+        self._search_count = TLabel(bar, self.theme, bg_key="surface", fg_key="text_3",
+                                    font=self.fonts.tiny, text="")
+        self._search_count.pack(side="left", padx=(S(5), 0))
+        self._btn_prev = FlatButton(bar, self.theme, icon="chevron_left", variant="ghost",
+                                    icon_size=S(11), padx=S(4), pady=S(4),
+                                    tooltip="上一个搜索结果",
+                                    command=lambda: self._search_step(-1))
+        self._btn_prev.pack(side="left", padx=S(1))
+        self._btn_next = FlatButton(bar, self.theme, icon="chevron_right", variant="ghost",
+                                    icon_size=S(11), padx=S(4), pady=S(4),
+                                    tooltip="下一个搜索结果",
+                                    command=lambda: self._search_step(1))
+        self._btn_next.pack(side="left", padx=(S(1), S(6)))
+
+        self._btn_layout = FlatButton(bar, self.theme, text="布局·横向", variant="ghost",
+                                      font=self.fonts.tiny, padx=S(7), pady=S(4),
+                                      tooltip="切换布局：横向 / 树状 / 紧凑",
+                                      command=self._cycle_layout)
+        self._btn_layout.pack(side="left", padx=S(2))
+        self._btn_fold = FlatButton(bar, self.theme, text="折叠全部", variant="ghost",
+                                    font=self.fonts.tiny, padx=S(7), pady=S(4),
+                                    tooltip="折叠 / 展开全部分支",
+                                    command=self._toggle_fold_all)
+        self._btn_fold.pack(side="left", padx=S(2))
+        self._btn_fit = FlatButton(bar, self.theme, text="适应", variant="ghost",
+                                   font=self.fonts.tiny, padx=S(7), pady=S(4),
+                                   tooltip="适应画布（显示全部节点）",
+                                   command=self._fit)
+        self._btn_fit.pack(side="left", padx=S(2))
+        self._btn_root = FlatButton(bar, self.theme, text="根节点", variant="ghost",
+                                    font=self.fonts.tiny, padx=S(7), pady=S(4),
+                                    tooltip="选中并定位根节点",
+                                    command=lambda: self._select_and_center(
+                                        self._roots[0] if self._roots else None))
+        self._btn_root.pack(side="left", padx=S(2))
+
+        self._zoom_label = TLabel(bar, self.theme, bg_key="surface", fg_key="text_3",
+                                  font=self.fonts.tiny, text="100%", width=5)
+        self._zoom_label.pack(side="left", padx=(S(6), S(2)))
+        self._btn_zoom_in = FlatButton(bar, self.theme, icon="zoom_in", variant="ghost",
+                                       icon_size=S(14), padx=S(4), pady=S(4),
+                                       tooltip="放大",
+                                       command=lambda: self._zoom_step(1.2))
+        self._btn_zoom_in.pack(side="left", padx=S(1))
+        self._btn_zoom_out = FlatButton(bar, self.theme, icon="zoom_out", variant="ghost",
+                                        icon_size=S(14), padx=S(4), pady=S(4),
+                                        tooltip="缩小",
+                                        command=lambda: self._zoom_step(1 / 1.2))
+        self._btn_zoom_out.pack(side="left", padx=S(1))
+        self._btn_layout_reset = FlatButton(bar, self.theme, text="自动布局", variant="ghost",
+                                            font=self.fonts.tiny, padx=S(7), pady=S(4),
+                                            tooltip="清除节点拖拽位置，恢复自动布局",
+                                            command=self._reset_layout)
+        self._btn_layout_reset.pack(side="left", padx=S(2))
+        self._btn_close = FlatButton(bar, self.theme, icon="close", variant="ghost",
+                                     icon_size=S(14), padx=S(5), pady=S(5),
+                                     tooltip="关闭（Esc）", command=self.close)
+        self._btn_close.pack(side="right", padx=(S(4), S(8)))
+
+    # ── 画布 / 详情 ──
+    def _build_canvas(self):
+        body = TFrame(self, self.theme, bg_key="surface")
+        body.pack(side="top", fill="both", expand=True)
+        pal = self.pal
+        self.canvas = tk.Canvas(body, bd=0, relief="flat", highlightthickness=0,
+                                bg=pal["bg"])
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self._vbar = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview,
+                                   style="Side.Vertical.TScrollbar")
+        self.canvas.configure(yscrollcommand=lambda f, l: self._on_scroll_y(f, l))
+        self._hbar = ttk.Scrollbar(body, orient="horizontal", command=self.canvas.xview,
+                                   style="Side.Vertical.TScrollbar")
+        self.canvas.configure(xscrollcommand=lambda f, l: self._on_scroll_x(f, l))
+        self._vbar.pack(side="right", fill="y")
+        self._hbar.pack(side="bottom", fill="x")
+        self.canvas.bind("<MouseWheel>", self._on_wheel, add="+")
+        self.canvas.bind("<Button-4>", lambda e: self._on_wheel(-120), add="+")
+        self.canvas.bind("<Button-5>", lambda e: self._on_wheel(120), add="+")
+        self.canvas.bind("<ButtonPress-1>", self._on_press, add="+")
+        self.canvas.bind("<B1-Motion>", self._on_motion, add="+")
+        self.canvas.bind("<ButtonRelease-1>", self._on_release, add="+")
+        for seq, fn in (("<Left>", lambda: self._nav(-2)),
+                        ("<Right>", lambda: self._nav(2)),
+                        ("<Up>", lambda: self._nav(-1)),
+                        ("<Down>", lambda: self._nav(1)),
+                        ("<Home>", lambda: self._select_and_center(
+                            self._roots[0] if self._roots else None))):
+            self.bind(seq, lambda e, fn=fn: (fn(), "break")[1])
+
+    def _build_detail(self):
+        pal = self.pal
+        self._detail = TFrame(self, self.theme, bg_key="surface", width=S(262))
+        self._detail.pack_propagate(False)
+        self._detail_line = TFrame(self, self.theme, bg_key="border", width=1)
+        self._detail.pack(side="right", fill="y")
+        self._detail_line.pack(side="right", fill="y")
+
+        dhead = TFrame(self._detail, self.theme, bg_key="surface")
+        dhead.pack(side="top", fill="x", padx=S(12), pady=(S(10), S(4)))
+        TLabel(dhead, self.theme, text="节点详情", bg_key="surface", fg_key="text",
+               font=self.fonts.section).pack(side="left")
+        self._btn_copy = FlatButton(dhead, self.theme, icon="copy", variant="ghost",
+                                    icon_size=S(13), padx=S(4), pady=S(4),
+                                    tooltip="复制消息内容", command=self._copy_detail)
+        self._btn_copy.pack(side="right")
+        self._detail_text = tk.Text(self._detail, wrap="word", bd=0, relief="flat",
+                                    font=self.fonts.small, padx=S(12), pady=S(6),
+                                    highlightthickness=0, cursor="arrow",
+                                    state="disabled", width=22, height=10)
+        self._detail_text.pack(side="top", fill="both", expand=True)
+        self._detail_hint = TLabel(self._detail, self.theme, bg_key="surface",
+                                   fg_key="text_3", font=self.fonts.tiny,
+                                   text="←父 · →首子 · ↑↓兄弟 · Home根")
+        self._detail_hint.pack(side="bottom", fill="x", padx=S(12), pady=(S(2), S(8)))
+
+        self._minimap = tk.Canvas(self, width=S(156), height=S(104), bd=0,
+                                  highlightthickness=S(1),
+                                  highlightbackground=pal["border_strong"],
+                                  highlightcolor=pal["border_strong"],
+                                  bg=pal["surface_2"])
+        self._minimap.place(in_=self.canvas, relx=1.0, rely=1.0,
+                            x=-S(10), y=-S(10), anchor="se")
+
+    # ── 布局 ──
+    def _card_metrics(self):
+        if self._layout_mode == "紧凑":
+            return S(126), S(40), S(26), S(12)
+        if self._layout_mode == "树状":
+            return S(150), S(46), S(34), S(20)
+        return S(172), S(50), S(36), S(16)
+
+    def _apply_layout(self):
+        nodes = self.nodes
+        W, H, GX, GY = self._card_metrics()
+        vertical = self._layout_mode == "树状"
+        pos = {}
+        cursor = [S(24)]
+        main_step = H + GY
+        cross_step = W + GX
+
+        def place(cid, depth):
+            kids = self._display_children(cid)
+            if vertical:
+                if not kids:
+                    x = cursor[0]
+                    cursor[0] += cross_step
+                    pos[cid] = (x, depth * main_step)
+                else:
+                    centers = [place(k, depth + 1) for k in kids]
+                    cx = (min(centers) + max(centers)) / 2.0
+                    pos[cid] = (cx - W / 2.0, depth * main_step)
+                return pos[cid][0] + W / 2.0
+            if not kids:
+                y = cursor[0]
+                cursor[0] += main_step
+                pos[cid] = (depth * cross_step, y)
+            else:
+                centers = [place(k, depth + 1) for k in kids]
+                cy = (min(centers) + max(centers)) / 2.0
+                pos[cid] = (depth * cross_step, cy - H / 2.0)
+            return pos[cid][1] + H / 2.0
+
+        for r in self._roots:
+            place(r, 0)
+        for cid in self._drag_pos:
+            if cid in pos:
+                pos[cid] = self._drag_pos[cid]
+        self._positions = pos
+        self._card_wh = (W, H)
+        xs = [p[0] for p in pos.values()] or [0]
+        ys = [p[1] for p in pos.values()] or [0]
+        self._content_w = max(xs) + W + S(40)
+        self._content_h = max(ys) + H + S(40)
+
+    # ── 绘制 ──
+    def _update_stats(self):
+        role_bits = []
+        names = {"user": "user", "assistant": "char", "system": "系统", "tool": "工具"}
+        for r in ("user", "assistant", "system", "tool"):
+            if self.role_counts.get(r):
+                role_bits.append("%s %d" % (names[r], self.role_counts[r]))
+        self._stats_label.configure(
+            text="节点 %d · 分支 %d · 最深 %d ｜ %s"
+                 % (len(self.nodes), self._branch_count,
+                    self._max_depth + 1, " · ".join(role_bits)))
+
+    def _update_zoom_label(self):
+        self._zoom_label.configure(text="%d%%" % round(self._zoom * 100))
+
+    def _edge_color(self, parent, child):
+        pal = self.pal
+        if parent == self._selected or child == self._selected:
+            return _hex_mix(pal["surface"], pal["text"], 0.55)
+        on = parent in self.path and child in self.path
+        if on:
+            return _hex_mix(pal["surface"], pal["text"], 0.34)
+        return pal["border_strong"]
+
+    def _redraw(self):
+        canvas = self.canvas
+        canvas.delete("all")
+        z = self._zoom
+        W, H = self._card_wh
+        canvas.configure(scrollregion=(0, 0,
+                                       max(1, self._content_w * z),
+                                       max(1, self._content_h * z)))
+        pal = self.pal
+        vertical = self._layout_mode == "树状"
+        self._card_rects = []
+
+        for cid, node in self.nodes.items():
+            if cid not in self._positions or cid in self._folded:
+                continue
+            px, py = self._positions[cid]
+            if vertical:
+                pax, pay = px + W * z / 2.0, py + H * z
+            else:
+                pax, pay = px + W * z, py + H * z / 2.0
+            for kid in self._display_children(cid):
+                if kid not in self._positions:
+                    continue
+                kx, ky = self._positions[kid]
+                if vertical:
+                    kax, kay = kx + W * z / 2.0, ky
+                else:
+                    kax, kay = kx, ky + H * z / 2.0
+                mx = pax + (kax - pax) / 2.0
+                my = pay + (kay - pay) / 2.0
+                if vertical:
+                    canvas.create_line(pax, pay, pax, my, kax, my, kax, kay,
+                                       smooth=True, width=S(1),
+                                       fill=self._edge_color(cid, kid))
+                else:
+                    canvas.create_line(pax, pay, mx, pay, mx, kay, kax, kay,
+                                       smooth=True, width=S(1),
+                                       fill=self._edge_color(cid, kid))
+
+        cw_win, ch_win = self._canvas_size()
+        if canvas.winfo_width() <= 2:
+            x0, y0, x1, y1 = -1e9, -1e9, 1e9, 1e9
+        else:
+            x0, y0 = canvas.canvasx(0), canvas.canvasy(0)
+            x1 = x0 + cw_win
+            y1 = y0 + ch_win
+        pad = S(140)
+        font_summary = self.fonts.small if z >= 0.55 else (self.fonts.family, 7)
+        font_role = self.fonts.tiny if z >= 0.4 else (self.fonts.family, 6)
+        show_text = z >= 0.3
+
+        for cid in sorted(self._positions, key=lambda c: self._positions[c][1]):
+            bx, by = self._positions[cid][0] * z, self._positions[cid][1] * z
+            cw, ch = W * z, H * z
+            if bx > x1 + pad or by > y1 + pad or bx + cw < x0 - pad or by + ch < y0 - pad:
+                continue
+            node = self.nodes[cid]
+            on_path = cid in self.path
+            is_sel = cid == self._selected
+            hit = cid in self._search_hits
+            outline = pal["border_strong"]
+            if on_path:
+                outline = pal["text"]
+            if hit:
+                outline = pal["ai_text"]
+            if is_sel:
+                outline = pal["accent"]
+            fill = pal["accent_soft"] if is_sel else pal["surface"]
+            ow = S(2) if (is_sel or hit) else S(1)
+            role_key = self.ROLE_KEY.get(node["role"], "other")
+            role_color = pal.get(role_key, pal["other"])
+            tag = "n_%s" % cid
+            rounded_rect(canvas, bx, by, bx + cw, by + ch,
+                         max(2, S(9) * z), fill=fill, outline=outline, width=ow)
+            dot_r = max(2.0, S(4) * z)
+            dy = by + S(11) * z
+            canvas.create_oval(bx + S(9) * z, dy - dot_r,
+                               bx + S(9) * z + 2 * dot_r, dy + dot_r,
+                               fill=role_color, outline="", tags=tag)
+            if show_text:
+                role_name = role_meta(node["role"])["cn"] if node["role"] else "分支"
+                canvas.create_text(bx + S(9) * z + 2 * dot_r + S(5), dy,
+                                   anchor="w", text=role_name, font=font_role,
+                                   fill=role_color, tags=tag)
+                if len(node["children"]) >= 2:
+                    canvas.create_text(bx + cw - S(7), dy, anchor="e",
+                                       text="⑂ %d" % len(node["children"]),
+                                       font=font_role, fill=pal["text_3"], tags=tag)
+                summary = fit_text(canvas, node["preview"], font_summary,
+                                   cw - S(18) * z)
+                if summary:
+                    canvas.create_text(bx + S(9) * z, by + S(24) * z, anchor="nw",
+                                       text=summary, width=max(S(40), cw - S(18) * z),
+                                       font=font_summary, fill=pal["text_2"],
+                                       justify="left", tags=tag)
+            if cid in self._folded:
+                canvas.create_text(bx + cw - S(7), by + ch - S(8) * z, anchor="e",
+                                   text="▸ 已折叠 %d 条" % self._hidden_count(cid),
+                                   font=font_role, fill=pal["text_2"], tags=tag)
+            self._card_rects.append((bx, by, bx + cw, by + ch, cid))
+            canvas.tag_bind(tag, "<Button-1>",
+                            lambda e, nid=cid: self._on_node_click(e, nid))
+            canvas.tag_bind(tag, "<Enter>",
+                            lambda _e, nid=cid: self._hover_card(nid, True))
+            canvas.tag_bind(tag, "<Leave>",
+                            lambda _e, nid=cid: self._hover_card(nid, False))
+
+        self._update_zoom_label()
+        self._update_minimap()
+
+    def _hover_card(self, cid, on):
+        if cid == self._selected:
+            return
+        canvas = self.canvas
+        tag = "n_%s" % cid
+        items = canvas.find_withtag(tag)
+        if not items:
+            return
+        color = (self.pal["accent_hover"] if on
+                 else (self.pal["text"] if cid in self.path else self.pal["text_2"]))
+        for item in items:
+            if (canvas.type(item) == "text"
+                    and canvas.itemcget(item, "fill") != self.pal["ai_text"]):
+                canvas.itemconfigure(item, fill=color)
+
+    # ── 交互 ──
+    def _node_at(self, cx, cy):
+        for (x0, y0, x1, y1, cid) in self._card_rects:
+            if x0 <= cx <= x1 and y0 <= cy <= y1:
+                return cid
+        return None
+
+    def _on_press(self, event):
+        cx, cy = self.canvas.canvasx(event.x), self.canvas.canvasy(event.y)
+        hit = self._node_at(cx, cy)
+        if hit is None:
+            self._drag = ("pan", event.x, event.y)
+            self.canvas.scan_mark(event.x, event.y)
+        else:
+            self._drag = ("node", event.x, event.y, hit)
+
+    def _on_motion(self, event):
+        if not self._drag:
+            return
+        if self._drag[0] == "pan":
+            self.canvas.scan_dragto(event.x, event.y, gain=1)
+            self._update_minimap()
+            return
+        cid = self._drag[3]
+        dx = (event.x - self._drag[1]) / max(0.01, self._zoom)
+        dy = (event.y - self._drag[2]) / max(0.01, self._zoom)
+        base = self._drag_pos.get(cid) or self._positions.get(cid)
+        if base is None:
+            return
+        self._drag_pos[cid] = (base[0] + dx, base[1] + dy)
+        self._drag = ("node", event.x, event.y, cid)
+        self._apply_layout()
+        self._redraw()
+
+    def _on_release(self, event):
+        if self._drag and self._drag[0] == "node":
+            cid = self._drag[3]
+            moved = (abs(event.x - self._drag[1]) > 4
+                     or abs(event.y - self._drag[2]) > 4)
+            if not moved:
+                self._select_and_center(cid)
+        self._drag = None
+
+    def _on_node_click(self, _event, nid):
+        """点击节点：关闭树状图并跳转到该分支。"""
+        self.close()
+        self.app._jump_to_branch_node(nid)
+
+    def _select_and_center(self, cid):
+        if cid is None or cid not in self.nodes:
+            return
+        self._selected = cid
+        self._show_detail(cid)
+        self._redraw()
+        self._center(cid)
+
+    def _canvas_size(self):
+        w = self.canvas.winfo_width()
+        h = self.canvas.winfo_height()
+        if w <= 2 or h <= 2:
+            w = max(1, self._win_w - S(262) - S(30))
+            h = max(1, self._win_h - S(30) - S(30))
+        return w, h
+
+    def _center(self, cid):
+        if cid not in self._positions:
+            return
+        W, H = self._card_wh
+        z = self._zoom
+        win_w, win_h = self._canvas_size()
+        tx, ty = self._positions[cid]
+        target_x = (tx + W / 2.0) * z - win_w / 2.0
+        target_y = (ty + H / 2.0) * z - win_h / 2.0
+        sw = max(1.0, self._content_w * z)
+        sh = max(1.0, self._content_h * z)
+        self.canvas.xview_moveto(max(0.0, min(1.0 - win_w / sw, target_x / sw)))
+        self.canvas.yview_moveto(max(0.0, min(1.0 - win_h / sh, target_y / sh)))
+        self._update_minimap()
+
+    def _animate_view(self, target_x, target_y):
+        canvas = self.canvas
+        sw = max(1.0, self._content_w * self._zoom)
+        sh = max(1.0, self._content_h * self._zoom)
+        fx0 = canvas.xview()[0] * sw
+        fy0 = canvas.yview()[0] * sh
+        if self._anim_job:
+            try:
+                self.after_cancel(self._anim_job)
+            except Exception:
+                pass
+            self._anim_job = None
+        total = 8
+
+        def tick(i):
+            t = i / float(total)
+            ease = 1.0 - (1.0 - t) ** 3
+            vx = fx0 + (max(0.0, target_x) - fx0) * ease
+            vy = fy0 + (max(0.0, target_y) - fy0) * ease
+            canvas.xview_moveto(max(0.0, min(1.0 - canvas.winfo_width() / sw,
+                                             vx / sw)))
+            canvas.yview_moveto(max(0.0, min(1.0 - canvas.winfo_height() / sh,
+                                             vy / sh)))
+            self._update_minimap()
+            if i < total:
+                self._anim_job = self.after(16, lambda: tick(i + 1))
+            else:
+                self._anim_job = None
+        tick(0)
+
+    def _on_wheel(self, event):
+        delta = getattr(event, "delta", 0)
+        if not delta:
+            return "break"
+        factor = 1.18 if delta > 0 else 1.0 / 1.18
+        old_z = self._zoom
+        new_z = max(0.08, min(2.5, old_z * factor))
+        if abs(new_z - old_z) < 1e-6:
+            return "break"
+        bcx = self.canvas.canvasx(event.x) / old_z
+        bcy = self.canvas.canvasy(event.y) / old_z
+        self._zoom = new_z
+        self._redraw()
+        sw = max(1.0, self._content_w * new_z)
+        sh = max(1.0, self._content_h * new_z)
+        self.canvas.xview_moveto(max(0.0, min(1.0 - self.canvas.winfo_width() / sw,
+                                              bcx * new_z / sw)))
+        self.canvas.yview_moveto(max(0.0, min(1.0 - self.canvas.winfo_height() / sh,
+                                              bcy * new_z / sh)))
+        return "break"
+
+    def _zoom_step(self, factor):
+        class _E:
+            delta = 120 if factor > 1 else -120
+            x = self.canvas.winfo_width() // 2
+            y = self.canvas.winfo_height() // 2
+        self._on_wheel(_E())
+
+    def _fit(self):
+        if not self._positions:
+            return
+        xs = [p[0] for p in self._positions.values()]
+        ys = [p[1] for p in self._positions.values()]
+        W, H = self._card_wh
+        bw = max(xs) + W - min(xs) + S(20)
+        bh = max(ys) + H - min(ys) + S(20)
+        win_w, win_h = self._canvas_size()
+        z = min(win_w / max(1, bw), win_h / max(1, bh))
+        self._zoom = max(0.08, min(2.5, z))
+        self._redraw()
+        cx = (min(xs) + max(xs) + W) / 2.0
+        cy = (min(ys) + max(ys) + H) / 2.0
+        self._animate_view(cx * self._zoom - self.canvas.winfo_width() / 2.0,
+                           cy * self._zoom - self.canvas.winfo_height() / 2.0)
+
+    def _cycle_layout(self):
+        i = self.LAYOUTS.index(self._layout_mode)
+        self._layout_mode = self.LAYOUTS[(i + 1) % len(self.LAYOUTS)]
+        self._btn_layout.configure(text="布局·" + self._layout_mode)
+        self._apply_layout()
+        self._redraw()
+        self._fit()
+
+    def _toggle_fold_all(self):
+        if self._folded:
+            self._folded = set()
+            self._btn_fold.configure(text="折叠全部")
+        else:
+            self._folded = {cid for cid, n in self.nodes.items()
+                            if len(n["children"]) >= 2}
+            self._btn_fold.configure(text="展开全部")
+        self._apply_layout()
+        self._redraw()
+        self._update_minimap()
+
+    def _reset_layout(self):
+        self._drag_pos = {}
+        self._apply_layout()
+        self._redraw()
+        self._fit()
+
+    def _nav(self, code):
+        cid = self._selected
+        if cid is None:
+            return
+        if code == -2:
+            target = self.nodes[cid]["parent"]
+        elif code == 2:
+            kids = self._display_children(cid)
+            target = kids[0] if kids else None
+        else:
+            parent = self.nodes[cid]["parent"]
+            if not parent:
+                return
+            siblings = self.nodes[parent]["children"]
+            i = siblings.index(cid)
+            target = siblings[max(0, min(len(siblings) - 1, i + code))]
+        if target:
+            self._select_and_center(target)
+
+    # ── 搜索 ──
+    @property
+    def _search_term(self):
+        return self._search_var.get().strip().lower()
+
+    def _on_search_change(self):
+        term = self._search_var.get().strip().lower()
+        self._search_hits = []
+        self._search_pos = -1
+        if term:
+            for cid, node in self.nodes.items():
+                hay = (node["preview"] + " " + node["role"] + " "
+                       + " ".join((m.get("content") or "") for m in node["messages"]))
+                if term in hay.lower():
+                    self._search_hits.append(cid)
+        for cid in list(self._search_hits):
+            if cid in self._folded:
+                self._folded.discard(cid)
+        self._apply_layout()
+        if self._search_hits:
+            self._search_count.configure(text="%d 处" % len(self._search_hits))
+            self._selected = self._search_hits[0]
+            self._show_detail(self._selected)
+            self._redraw()
+            self._center(self._selected)
+        else:
+            self._search_count.configure(text="无匹配" if self._search_term else "")
+            self._redraw()
+
+    def _search_step(self, step):
+        if not self._search_hits:
+            return
+        self._search_pos = (self._search_pos + step) % len(self._search_hits)
+        self._selected = self._search_hits[self._search_pos]
+        self._show_detail(self._selected)
+        self._redraw()
+        self._center(self._selected)
+
+    # ── 滚动联动 ──
+    def _on_scroll_y(self, first, last):
+        if self._vbar.winfo_exists():
+            self._vbar.set(first, last)
+        self._update_minimap()
+
+    def _on_scroll_x(self, first, last):
+        if self._hbar.winfo_exists():
+            self._hbar.set(first, last)
+        self._update_minimap()
+
+    # ── 详情 ──
+    def _show_detail(self, cid):
+        text = self._detail_text
+        pal = self.pal
+        if not text.winfo_exists():
+            return
+        text.configure(state="normal")
+        text.delete("1.0", "end")
+        text.tag_configure("h", font=self.fonts.small_bold, foreground=pal["text"],
+                           spacing1=S(4), spacing3=S(2))
+        text.tag_configure("v", font=self.fonts.small, foreground=pal["text_2"],
+                           spacing3=S(6))
+        text.tag_configure("msg", font=self.fonts.small, foreground=pal["text"],
+                           spacing1=S(2), spacing2=S(4))
+        text.tag_configure("sep", foreground=pal["border_strong"])
+        if cid is None or cid not in self.nodes:
+            text.insert("end", "点击画布中的节点查看详情。")
+            text.configure(state="disabled")
+            return
+        node = self.nodes[cid]
+        role = node["role"] or "branch"
+        meta = ({"cn": "tool", "color": "tool"} if role == "tool"
+                else role_meta(role))
+        color = pal.get(self.ROLE_KEY.get(role, "other"), pal["other"])
+
+        def row(label, value):
+            text.insert("end", label + "  ", ("h",))
+            text.insert("end", value + "\n", ("v",))
+
+        row("角色", meta["cn"])
+        stamps = [parse_timestamp(m.get("createAt")) for m in node["messages"]
+                  if m.get("createAt")]
+        if stamps:
+            row("时间", stamps[0] + (" ~ " + stamps[-1] if len(stamps) > 1 else ""))
+        if self._model:
+            row("模型", self._model)
+        parent = node["parent"]
+        if parent and parent in self.nodes:
+            row("父节点", self.nodes[parent]["preview"] or "（无内容段落）")
+        kids = self.nodes[cid]["children"]
+        row("子节点", "%d 个%s" % (len(kids),
+                                  "（含嵌套分支）" if len(kids) >= 2 else ""))
+        row("消息", "%d 条 · 子树共 %d 条" % (node["own_count"], node["total"]))
+        if len(kids) >= 2:
+            row("分支", "此节点后有 %d 条不同走向" % len(kids))
+        chain, cur = [], cid
+        while cur is not None:
+            pv = self.nodes[cur]["preview"] or "（段落）"
+            chain.append(ellipsis(pv, 12))
+            cur = self.nodes[cur]["parent"]
+        text.insert("end", "路径  ", ("h",))
+        text.insert("end", " → ".join(reversed(chain)) + "\n", ("v",))
+        text.insert("end", "─" * 18 + "\n", ("sep",))
+        for m in node["messages"]:
+            mrole = ({"cn": "tool", "color": "tool"} if m.get("role") == "tool"
+                     else role_meta(m.get("role") or ""))
+            text.insert("end", "[%s] " % mrole["cn"], ("h",))
+            text.insert("end", (m.get("content") or "（空）") + "\n\n", ("msg",))
+        if not node["messages"]:
+            text.insert("end", "（此节点不含独立消息，仅为分支目录）\n", ("v",))
+        text.configure(state="disabled")
+
+    def _copy_detail(self):
+        cid = self._selected
+        if cid is None or cid not in self.nodes:
+            return
+        parts = [(m.get("content") or "").strip()
+                 for m in self.nodes[cid]["messages"]]
+        content = "\n\n".join(x for x in parts if x)
+        if not content:
+            self.app._set_status("该节点没有可复制的消息")
+            return
+        self.app.root.clipboard_clear()
+        self.app.root.clipboard_append(content)
+        self.app._set_status("已复制节点消息（%d 字符）" % len(content))
+
+    # ── 小地图 ──
+    def _update_minimap(self):
+        mm = self._minimap
+        if not mm.winfo_exists():
+            return
+        mm.delete("all")
+        if not self._positions:
+            return
+        pal = self.pal
+        W, H = self._card_wh
+        xs = [p[0] for p in self._positions.values()]
+        ys = [p[1] for p in self._positions.values()]
+        bx0, by0 = min(xs), min(ys)
+        bw = max(1, max(xs) + W - bx0)
+        bh = max(1, max(ys) + H - by0)
+        w = mm.winfo_width() - S(8)
+        h = mm.winfo_height() - S(8)
+        k = min(w / bw, h / bh)
+        ox = S(4) - bx0 * k
+        oy = S(4) - by0 * k
+        for cid, (px, py) in self._positions.items():
+            on = cid in self.path
+            color = (_hex_mix(pal["surface"], pal["text"], 0.4) if on
+                     else pal["border_strong"])
+            mm.create_rectangle(ox + px * k, oy + py * k,
+                                ox + (px + W) * k, oy + (py + H) * k,
+                                fill=color if cid == self._selected else "",
+                                outline=color, width=1)
+        sw = max(1.0, self._content_w * self._zoom)
+        sh = max(1.0, self._content_h * self._zoom)
+        vx0 = self.canvas.xview()[0] * sw
+        vy0 = self.canvas.yview()[0] * sh
+        vw = self.canvas.winfo_width() / max(0.01, self._zoom)
+        vh = self.canvas.winfo_height() / max(0.01, self._zoom)
+        mm.create_rectangle(ox + vx0 * k, oy + vy0 * k,
+                            ox + (vx0 + vw) * k, oy + (vy0 + vh) * k,
+                            outline=pal["accent"], width=S(1))
+        self._mm_k, self._mm_ox, self._mm_oy = k, ox, oy
+
+    def _minimap_jump(self, event):
+        if not hasattr(self, "_mm_k"):
+            return
+        cx = (event.x - self._mm_ox) / self._mm_k
+        cy = (event.y - self._mm_oy) / self._mm_k
+        sw = max(1.0, self._content_w * self._zoom)
+        sh = max(1.0, self._content_h * self._zoom)
+        self.canvas.xview_moveto(max(0.0, min(1.0 - self.canvas.winfo_width() / sw,
+                                              (cx - self.canvas.winfo_width() / 2) / sw)))
+        self.canvas.yview_moveto(max(0.0, min(1.0 - self.canvas.winfo_height() / sh,
+                                              (cy - self.canvas.winfo_height() / 2) / sh)))
+        self._update_minimap()
+
+    # ── 主题 / 关闭 ──
+    def _on_theme(self, pal):
+        self.pal = pal
+        self._search_entry.configure(bg=pal["surface"], fg=pal["text"],
+                                     highlightbackground=pal["border_strong"],
+                                     highlightcolor=pal["border_strong"],
+                                     insertbackground=pal["accent"])
+        self._apply_layout()
+        self._redraw()
+        self._show_detail(self._selected)
+
+    def close(self):
+        self.app._tree_viewer = None
+        try:
+            self.theme.unsubscribe(self._on_theme)
+        except Exception:
+            pass
+        self.destroy()
+
+
+
+
 def main():
     filepath = None
     if len(sys.argv) > 1:

@@ -155,9 +155,6 @@ PALETTES = {
         "tool":          "#8a5c36",
         "tool_soft":     "#f6eee2",
         "tool_text":     "#8a5c36",
-        "tool":          "#8a5c36",
-        "tool_soft":     "#f6eee2",
-        "tool_text":     "#8a5c36",
         "other_soft":    "#f2edf2",
         "other_text":    "#6e5a6a",
         "danger":        "#8f534e",
@@ -171,6 +168,7 @@ PALETTES = {
         "flash":         "#f5efe3",
         "focus":         "#e3c9c9",
         "quote":         "#7e6845",
+        "card":          "#ffffff",
         "thumb":         "#ddd6ca",
         "thumb_hover":   "#c6beae",
         "trough":        "#faf9f7",
@@ -199,6 +197,9 @@ PALETTES = {
         "sys":           "#74633f",
         "sys_soft":      "#f3ecdd",
         "sys_text":      "#74633f",
+        "tool":          "#8a5c36",
+        "tool_soft":     "#f6eee2",
+        "tool_text":     "#8a5c36",
         "other":         "#6e5a6a",
         "other_soft":    "#efe9ef",
         "other_text":    "#6e5a6a",
@@ -213,9 +214,56 @@ PALETTES = {
         "flash":         "#f3ecdc",
         "focus":         "#dfc6c6",
         "quote":         "#7e6845",
+        "card":          "#faf8f4",
         "thumb":         "#d3cbbd",
         "thumb_hover":   "#beb5a4",
         "trough":        "#f1ede6",
+    },
+    "midnight": {
+        "bg":            "#171717",
+        "surface":       "#1D1D1D",
+        "surface_2":     "#202020",
+        "surface_3":     "#252525",
+        "border":        "#272727",
+        "border_strong": "#333333",
+        "text":          "#E8E5DF",
+        "text_2":        "#A7A29A",
+        "text_3":        "#8B877F",
+        "accent":        "#C5AFA0",
+        "accent_hover":  "#D6C2B3",
+        "accent_soft":   "#35312B",
+        "accent_text":   "#C5AFA0",
+        "accent_fg":     "#1D1D1D",
+        "user":          "#A8B5A5",
+        "user_soft":     "#222A22",
+        "user_text":     "#A8B5A5",
+        "ai":            "#C9A8A8",
+        "ai_soft":       "#2B2323",
+        "ai_text":       "#C9A8A8",
+        "sys":           "#CBB691",
+        "sys_soft":      "#2B2620",
+        "sys_text":      "#CBB691",
+        "other":         "#B39AAE",
+        "other_soft":    "#282328",
+        "other_text":    "#B39AAE",
+        "tool":          "#C4A582",
+        "tool_soft":     "#2B241C",
+        "tool_text":     "#C4A582",
+        "danger":        "#C0888C",
+        "danger_soft":   "#332325",
+        "ok":            "#A8B5A5",
+        "ok_soft":       "#222A22",
+        "select":        "#3A423E",
+        "hl":            "#332E24",
+        "hl_cur":        "#4A4232",
+        "hl_fg":         "#E8E5DF",
+        "flash":         "#242320",
+        "focus":         "#4A3D38",
+        "quote":         "#C5AFA0",
+        "thumb":         "#3A3A3A",
+        "thumb_hover":   "#4A4A4A",
+        "trough":        "#171717",
+        "card":          "#252525",
     },
 }
 
@@ -249,7 +297,9 @@ class Theme:
             pass
 
     def toggle(self):
-        self.name = "dark" if self.name == "light" else "light"
+        order = list(PALETTES.keys())
+        i = order.index(self.name) if self.name in order else 0
+        self.name = order[(i + 1) % len(order)]
         for callback in list(self._subs):
             callback(self.pal)
         return self.name
@@ -2120,7 +2170,7 @@ class ChatViewerApp:
                                       command=self.toggle_sidebar)
         self.btn_sidebar.pack(side="right", padx=(S(4), S(4)), pady=S(9))
         self.btn_theme = FlatButton(bar, self.theme, icon="theme", variant="ghost",
-                                    tooltip="切换月白 / 暖沙主题",
+                                    tooltip="切换主题：月白 → 暖沙 → 墨夜",
                                     command=self.toggle_theme)
         self.btn_theme.pack(side="right", padx=S(3), pady=S(9))
         self._toolbar_sep(bar, gap=S(8))
@@ -4055,7 +4105,9 @@ class ChatViewerApp:
         self._refresh_theme_button()
         self._apply_titlebar()
         save_settings(self.settings)
-        self._set_status("已切换到%s主题" % ("暖沙" if name == "dark" else "月白"))
+        self._set_status("已切换到%s主题"
+                         % ({"light": "月白", "dark": "暖沙",
+                             "midnight": "墨夜"}.get(name, name)))
 
     def _refresh_theme_button(self):
         self.btn_theme.set_icon("theme")
@@ -4076,7 +4128,7 @@ class ChatViewerApp:
             return
         try:
             import ctypes
-            dark = 0
+            dark = 1 if self.theme.name == "midnight" else 0
             value = ctypes.c_int(dark)
             for attr in (20, 19):  # Win10 2004+ 用 20，早期版本用 19
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(
@@ -4612,7 +4664,7 @@ class BranchTreeViewer(tk.Toplevel):
                 outline = pal["ai_text"]
             if is_sel:
                 outline = pal["accent"]
-            fill = pal["accent_soft"] if is_sel else pal["surface"]
+            fill = pal["accent_soft"] if is_sel else pal["card"]
             ow = S(2) if (is_sel or hit) else S(1)
             role_key = self.ROLE_KEY.get(node["role"], "other")
             role_color = pal.get(role_key, pal["other"])

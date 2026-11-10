@@ -396,6 +396,44 @@ def _branch_preview(chunk, limit=24):
     return "（空）"
 
 
+def _first_preview(msgs, limit=20):
+    """取消息块的首条非空内容作预览。"""
+    for m in msgs or []:
+        text = (m.get("content") or "").strip()
+        if text:
+            return ellipsis(text, limit)
+    return ""
+
+
+def _sibling_previews(blocks, limit=22):
+    """比较兄弟分支的消息块，返回各分支「截断后仍可分辨」的差异预览列表；
+    无差异时返回 None（调用方自行回退到首条消息预览）。"""
+    best = None
+    for i in range(max((len(b) for b in blocks), default=0)):
+        texts = []
+        for b in blocks:
+            if i < len(b):
+                m = b[i]
+                texts.append("%s|%s" % (m.get("role") or "",
+                                        (m.get("content") or "").strip()))
+            else:
+                texts.append(None)
+        if len(set(texts)) <= 1:
+            continue
+        out = []
+        for t in texts:
+            if t is None:
+                out.append("（此分支到此为止）")
+            else:
+                content = t.split("|", 1)[1] if "|" in t else t
+                out.append(ellipsis(content.strip() or "（空）", limit))
+        if len(set(out)) > 1:
+            return out
+        if best is None:
+            best = out
+    return best
+
+
 def traverse_chunks(chunks, overrides=None):
     """按 chunk 树展开 active 分支，返回 ([(chunk_id, messages), ...], forks)。
 
@@ -526,34 +564,9 @@ def extract_messages(json_data, branch_overrides=None):
             return _branch_preview(node) if node else "（空）"
 
         def previews_for(fork):
-            """各分支的预览：默认取首条消息；若开头相同或差异过小（截断后
-            无区分度），自动前进到第一条「截断后仍可分辨」的差异消息。"""
-            ids = fork["options"]
-            blocks = [chunk_msgs_map.get(cid) or [] for cid in ids]
-            best = None
-            for i in range(max((len(b) for b in blocks), default=0)):
-                texts = []
-                for b in blocks:
-                    if i < len(b):
-                        m = b[i]
-                        texts.append("%s|%s" % (m.get("role") or "",
-                                                (m.get("content") or "").strip()))
-                    else:
-                        texts.append(None)
-                if len(set(texts)) <= 1:
-                    continue
-                out = []
-                for t in texts:
-                    if t is None:
-                        out.append("（此分支到此为止）")
-                    else:
-                        content = t.split("|", 1)[1] if "|" in t else t
-                        out.append(ellipsis(content.strip() or "（空）", 24))
-                if len(set(out)) > 1:
-                    return out
-                if best is None:
-                    best = out
-            return best or [chunk_preview(cid) for cid in ids]
+            blocks = [chunk_msgs_map.get(cid) or [] for cid in fork["options"]]
+            return (_sibling_previews(blocks)
+                    or [chunk_preview(cid) for cid in fork["options"]])
 
         for chunk_id, fork in forks.items():
             last_idx = None
@@ -3648,6 +3661,21 @@ class ChatViewerApp:
                 nxt = next((k for k in kids if nodes[k]["active"]), None)
             cur = nxt if nxt is not None else (kids[0] if kids else None)
 
+        # 节点预览：多子节点的孩子们互为兄弟，用差异预览（兄弟常共享分叉时
+        # 的公共首句，直接取首条会完全相同）；其余节点取自身首条消息
+        for node in nodes.values():
+            if len(node["children"]) >= 2:
+                blocks = [msgs_map.get(k, []) for k in node["children"]]
+                previews = _sibling_previews(blocks)
+                if previews is None:
+                    previews = [_first_preview(msgs_map.get(k, []))
+                                for k in node["children"]]
+                for k, pv in zip(node["children"], previews):
+                    nodes[k]["preview"] = pv
+        for node in nodes.values():
+            if not node["preview"]:
+                node["preview"] = _first_preview(msgs_map.get(node["id"], []))
+
         return {"nodes": nodes, "path": path, "roots": roots}
 
     def _jump_to_branch_node(self, node_id):
@@ -3698,7 +3726,12 @@ class ChatViewerApp:
         self._set_status("已跳转到所选分支 · 共 %d 条消息" % len(self.messages))
 
     def _show_branch_tree(self, idx, widget):
-        """点击分支芯片：弹出树状图（整棵分支树），点选任意节点直达。"""
+        """点击分支芯片：弹出图形化分支树（悬浮窗），点选任意节点直达。
+
+        横向组织结构图：根在左，分支向右展开，父到子用平滑贝塞尔曲线；
+        滚轮缩放（0.12x - 1.8x，光标为锚点），打开时自适应全览并居中当前
+        所在节点；单子链折叠进连线，只画分叉与叶子。
+        """
         if not self.chat_data:
             return
         if self.edited:
@@ -3721,78 +3754,245 @@ class ChatViewerApp:
             tip.attributes("-topmost", True)
         except Exception:
             pass
-        tip.configure(bg=pal["border_strong"])
+        tip.configure(bg=pal["surface"])
 
-        text = tk.Text(tip, wrap="none", bd=0, relief="flat", font=self.fonts.small,
-                       bg=pal["surface"], fg=pal["text"], insertwidth=0,
-                       padx=S(12), pady=S(10), cursor="hand2",
-                       highlightthickness=1,
-                       highlightbackground=pal["border_strong"],
-                       highlightcolor=pal["border_strong"])
+        fobj = tkfont.Font(root=self.root, font=self.fonts.small)
+        BASE_DOT_R = 4.0
+        ROW_H = S(30)
+        COL_GAP = S(26)
+        MARGIN = S(16)
+
+        # 显示树：跳过单子链（纯延续段落不画节点），分叉与叶子才成节点
+        resolved = {}
+
+        def display_children(cid):
+            if cid in resolved:
+                return resolved[cid]
+            kids = nodes[cid]["children"]
+            if len(kids) != 1:
+                out = list(kids)
+            else:
+                out = display_children(kids[0])
+            resolved[cid] = out
+            return out
+
+        def label_of(cid):
+            node = nodes[cid]
+            return node["preview"] or "（%d 条）" % node["total"]
+
+        col_max = {}
+
+        def collect(cid, depth):
+            col_max[depth] = max(col_max.get(depth, 0),
+                                 fobj.measure(label_of(cid)) + 2 * BASE_DOT_R + S(12))
+            for kid in display_children(cid):
+                collect(kid, depth + 1)
+
+        for root_id in tree["roots"]:
+            collect(root_id, 0)
+        if not col_max:
+            return
+        max_depth = max(col_max)
+
+        xs = []
+        x = MARGIN
+        for depth in range(max_depth + 1):
+            xs.append(x)
+            x += col_max.get(depth, S(40)) + COL_GAP
+        content_w = xs[max_depth] + col_max.get(max_depth, S(40)) + MARGIN
+
+        pos = {}
+        y_cursor = [MARGIN]
+
+        def place(cid, depth):
+            kids = display_children(cid)
+            if not kids:
+                y = y_cursor[0]
+                y_cursor[0] += ROW_H
+            else:
+                ys = [place(k, depth + 1) for k in kids]
+                y = (min(ys) + max(ys)) / 2.0
+            pos[cid] = (xs[depth], y)
+            return y
+
+        for root_id in tree["roots"]:
+            place(root_id, 0)
+        content_h = y_cursor[0] - ROW_H + BASE_DOT_R + MARGIN
+
+        # 当前路径最深节点（无点击芯片时作为「我在这」）
+        focus_id = marked
+        if focus_id is None and tree["roots"]:
+            deepest = None
+            cur = tree["roots"][0]
+            while cur is not None and cur in path:
+                deepest = cur
+                kids = nodes[cur]["children"]
+                if not kids:
+                    break
+                want = self.branch_overrides.get(cur)
+                nxt = want if want in kids else None
+                if nxt is None:
+                    nxt = next((k for k in kids if nodes[k]["active"]), None)
+                cur = nxt if nxt is not None else (kids[0] if kids else None)
+            focus_id = deepest
+
+        TLabel(tip, self.theme, text="对话分支树 · 滚轮缩放 · 点击节点直达",
+               bg_key="surface", fg_key="text_3", font=self.fonts.tiny).pack(
+            anchor="w", padx=S(12), pady=(S(8), S(4)))
+        body = tk.Frame(tip, bg=pal["surface"])
+        body.pack(fill="both", expand=True)
+
+        canvas = tk.Canvas(body, bd=0, relief="flat", highlightthickness=1,
+                           highlightbackground=pal["border_strong"],
+                           highlightcolor=pal["border_strong"],
+                           bg=pal["surface"])
+        WIN_W = S(640)
+        WIN_H = S(440)
+        win_w, win_h = WIN_W, WIN_H
+        canvas.configure(width=win_w, height=win_h)
+        canvas.pack(fill="both")
+
+        state = {"z": 1.0}
+
+        def redraw():
+            z = state["z"]
+            canvas.delete("all")
+            sw = max(1.0, content_w * z)
+            sh = max(1.0, content_h * z)
+            canvas.configure(scrollregion=(0, 0, sw, sh))
+            dot_r = max(2.0, BASE_DOT_R * z)
+            stroke = max(1, int(round(1.1 * z)))
+            if z >= 0.8:
+                font = self.fonts.small
+            elif z >= 0.45:
+                font = (self.fonts.family, 7)
+            else:
+                font = (self.fonts.family, 6)
+            show_labels = z >= 0.4
+
+            def draw_edges(cid):
+                dx, dy = pos[cid]
+                dx, dy = dx * z, dy * z
+                on = cid in path
+                for kid in display_children(cid):
+                    kx, ky = pos[kid]
+                    kx, ky = kx * z, ky * z
+                    mx = dx + (kx - dx) / 2.0
+                    line_color = (_hex_mix(pal["surface"], pal["text"], 0.38)
+                                  if on and kid in path else pal["border_strong"])
+                    canvas.create_line(dx + dot_r, dy, mx, dy, kx - dot_r, ky,
+                                       smooth=True, width=stroke, fill=line_color)
+                    draw_edges(kid)
+
+            def draw_nodes(cid):
+                dx, dy = pos[cid]
+                dx, dy = dx * z, dy * z
+                on = cid in path
+                is_cur = cid == marked
+                tag = "n_%s" % cid
+                if is_cur:
+                    fill, outline = pal["ai_text"], ""
+                elif on:
+                    fill, outline = pal["surface"], pal["text"]
+                else:
+                    fill, outline = pal["surface"], pal["border_strong"]
+                canvas.create_oval(dx - dot_r, dy - dot_r, dx + dot_r, dy + dot_r,
+                                   fill=fill, outline=outline, width=S(1), tags=tag)
+                if show_labels or is_cur:
+                    label_color = (pal["ai_text"] if is_cur
+                                   else (pal["text"] if on else pal["text_2"]))
+                    font = self.fonts.small_bold if is_cur else font
+                    label = canvas.create_text(dx + dot_r + S(8), dy, anchor="w",
+                                               text=label_of(cid), font=font,
+                                               fill=label_color, tags=tag)
+                    if not is_cur:
+                        canvas.tag_bind(tag, "<Enter>",
+                                        lambda _e, l=label: canvas.itemconfigure(
+                                            l, fill=pal["accent_hover"]))
+                        canvas.tag_bind(tag, "<Leave>",
+                                        lambda _e, l=label, c=label_color:
+                                        canvas.itemconfigure(l, fill=c))
+                canvas.tag_bind(tag, "<Button-1>",
+                                lambda _e, nid=cid: (close_tree(),
+                                                     self._jump_to_branch_node(nid)))
+                for kid in display_children(cid):
+                    draw_nodes(kid)
+
+            for root_id in tree["roots"]:
+                draw_edges(root_id)
+            for root_id in tree["roots"]:
+                draw_nodes(root_id)
 
         def close_tree(_event=None):
             try:
-                text.grab_release()
+                canvas.grab_release()
                 tip.grab_release()
                 tip.destroy()
             except Exception:
                 pass
             return "break"
 
-        lines = []
+        def clamp_view():
+            sw = max(1.0, content_w * state["z"])
+            sh = max(1.0, content_h * state["z"])
+            xfrac = canvas.xview()[0]
+            yfrac = canvas.yview()[0]
+            canvas.xview_moveto(max(0.0, min(xfrac, max(0.0, 1.0 - win_w / sw))))
+            canvas.yview_moveto(max(0.0, min(yfrac, max(0.0, 1.0 - win_h / sh))))
 
-        def emit_line(cid, connector, prefix):
-            node = nodes[cid]
-            if node["own_count"]:
-                label = "%s · %d 条" % (node["preview"], node["total"])
-            else:
-                label = "%d 条" % node["total"]
-            if cid == marked:
-                mark, base_tag = "● ", "cur"
-            elif cid in path:
-                mark, base_tag = "○ ", "onpath"
-            else:
-                mark, base_tag = "○ ", "off"
-            lines.append((prefix + connector + mark + label,
-                          (base_tag, "node", "node_%s" % cid)))
+        last_serial = {"n": 0}
 
-        def walk(cid, prefix, connector):
-            emit_line(cid, connector, prefix)
-            kids = nodes[cid]["children"]
-            for i, kid in enumerate(kids):
-                last = (i == len(kids) - 1)
-                walk(kid, prefix + ("   " if last else "│  "),
-                     "└─ " if last else "├─ ")
-
-        for root_id in tree["roots"]:
-            walk(root_id, "", "")
-
-        text.tag_configure("cur", foreground=pal["ai_text"],
-                           font=self.fonts.small_bold)
-        text.tag_configure("onpath", foreground=pal["text"])
-        text.tag_configure("off", foreground=pal["text_2"])
-        text.tag_configure("hdr", foreground=pal["text_3"])
-        text.insert("end", "分支树 · 点击节点直达\n", ("hdr",))
-        for line_text, tags in lines:
-            text.insert("end", line_text + "\n", tags)
-        for _line_text, tags in lines:
-            node_tag = next(t for t in tags if t.startswith("node_"))
-            cid = node_tag[len("node_"):]
-            text.tag_bind(node_tag, "<Button-1>",
-                          lambda _e, nid=cid: (close_tree(),
-                                               self._jump_to_branch_node(nid)))
-        text.configure(state="disabled", width=44,
-                       height=min(max(len(lines) + 1, 4), 18))
-        text.pack(fill="both", expand=True, padx=1, pady=1)
+        def on_wheel(event):
+            # Windows 把滚轮投递给焦点窗口：弹窗取焦点后事件落在 tip 上，
+            # 再按 x_root 统一换算成 canvas 内容坐标；serial 去重防多层绑定
+            if getattr(event, "serial", 0) == last_serial["n"]:
+                return "break"
+            last_serial["n"] = getattr(event, "serial", 0)
+            delta = getattr(event, "delta", 0)
+            if not delta:
+                return "break"
+            factor = 1.15 if delta > 0 else 1.0 / 1.15
+            old_z = state["z"]
+            new_z = max(0.12, min(1.8, old_z * factor))
+            if abs(new_z - old_z) < 1e-6:
+                return "break"
+            bcx = canvas.canvasx(event.x_root - canvas.winfo_rootx()) / old_z
+            bcy = canvas.canvasy(event.y_root - canvas.winfo_rooty()) / old_z
+            state["z"] = new_z
+            redraw()
+            sw = max(1.0, content_w * new_z)
+            sh = max(1.0, content_h * new_z)
+            canvas.xview_moveto(max(0.0, min(1.0 - win_w / sw,
+                                             bcx * new_z / sw)))
+            canvas.yview_moveto(max(0.0, min(1.0 - win_h / sh,
+                                             bcy * new_z / sh)))
+            return "break"
 
         def on_press(event):
-            # 点在弹窗外（grab 使所有点击都落到本窗口）→ 关闭
+            # grab 使所有点击都落到本窗口：点在窗外即关闭
             if 0 <= event.x <= tip.winfo_width() and 0 <= event.y <= tip.winfo_height():
                 return
             close_tree()
 
         tip.bind("<Button-1>", on_press, add="+")
         tip.bind("<Escape>", close_tree, add="+")
+        tip.bind("<MouseWheel>", on_wheel, add="+")
+        body.bind("<MouseWheel>", on_wheel, add="+")
+        canvas.bind("<MouseWheel>", on_wheel, add="+")
+
+        # 初始缩放：优先全览（fit），过小时钳到 0.12；居中到当前节点
+        fit = min(WIN_W / max(1.0, content_w), WIN_H / max(1.0, content_h))
+        state["z"] = max(0.12, min(1.0, fit))
+        redraw()
+        if focus_id and focus_id in pos:
+            fx, fy = pos[focus_id]
+            fx = fx * state["z"] - win_w / 2.0
+            fy = fy * state["z"] - win_h / 2.0
+            sw = max(1.0, content_w * state["z"])
+            sh = max(1.0, content_h * state["z"])
+            canvas.xview_moveto(max(0.0, min(1.0 - win_w / sw, fx / sw)))
+            canvas.yview_moveto(max(0.0, min(1.0 - win_h / sh, fy / sh)))
+        clamp_view()
 
         try:
             tip.update_idletasks()
@@ -3809,6 +4009,10 @@ class ChatViewerApp:
         except Exception:
             pass
         tip.grab_set()
+        try:
+            tip.focus_set()
+        except Exception:
+            pass
 
     # ══════════════════════════ 对话分支：切换 / 树状图 ══════════════════════════
     def switch_branch(self, idx, delta):

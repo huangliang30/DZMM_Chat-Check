@@ -2226,6 +2226,12 @@ class ChatViewerApp:
         self.edit_panel.pack_propagate(False)
         self.edit_line = TFrame(self.body, self.theme, bg_key="border", width=1)
         self._build_edit_panel()
+        # 悬浮分支按钮：加载含分支的文件时浮于正文右下角，点击弹出分支树状图
+        self.btn_branch = FlatButton(self.stage, self.theme, text="", variant="soft",
+                                     font=self.fonts.small, padx=S(14), pady=S(6),
+                                     tooltip="对话分支树 · 查看与切换分支",
+                                     command=lambda: self._show_branch_tree(
+                                         None, self.btn_branch))
 
     def _build_transcript(self):
         frame = TFrame(self.stage, self.theme, bg_key="bg")
@@ -2720,6 +2726,7 @@ class ChatViewerApp:
         self.folder_panel._sync_selection()
         self.folder_panel.filter_box.entry.focus_set()
         self._update_back_folder()
+        self._update_branch_button()
         self._set_status("文件夹 %s · %d 个聊天文件"
                          % (ellipsis(os.path.basename(self.folder_panel.folder) or self.folder_panel.folder, 40),
                             len(self.folder_panel.filtered)))
@@ -2738,6 +2745,7 @@ class ChatViewerApp:
         else:
             self._show_empty_state()
         self._update_back_folder()
+        self._update_branch_button()
 
     def _on_drop(self, event):
         data = event.data or ""
@@ -2930,31 +2938,6 @@ class ChatViewerApp:
                         area, self.theme, text="已修改", on_key="bg",
                         bg_key="ai_soft", fg_key="ai_text", font=self.fonts.chip),
                         padx=S(6))
-                fork = msg.get("_fork")
-                if fork:
-                    options = fork["options"]
-                    try:
-                        pos = options.index(fork["current"]) + 1
-                    except ValueError:
-                        pos = 1
-                    chip = Chip(area, self.theme, text="分支 %d/%d" % (pos, len(options)),
-                                on_key="bg", bg_key="ai_soft", fg_key="ai_text",
-                                font=self.fonts.chip)
-                    chip.configure(cursor="hand2")
-                    chip.bind("<Button-1>",
-                              lambda _e, i=idx, w=chip: self._show_branch_tree(i, w))
-                    Tooltip(chip, self.theme, "点击查看分支树")
-                    area.window_create("end", window=chip, padx=S(6))
-                    area.window_create("end", window=FlatButton(
-                        area, self.theme, icon="chevron_left", variant="ghost",
-                        icon_size=S(11), padx=S(4), pady=S(3), on_key="bg",
-                        tooltip="上一分支",
-                        command=lambda i=idx: self.switch_branch(i, -1)), padx=S(2))
-                    area.window_create("end", window=FlatButton(
-                        area, self.theme, icon="chevron_right", variant="ghost",
-                        icon_size=S(11), padx=S(4), pady=S(3), on_key="bg",
-                        tooltip="下一分支",
-                        command=lambda i=idx: self.switch_branch(i, 1)), padx=S(2))
                 area.insert("end", "\n", ("hdr_line",))
 
                 body_tags = ("body",) + (("body_dim",) if (internal or role == "system") else ())
@@ -2996,6 +2979,7 @@ class ChatViewerApp:
         self._apply_search_highlights()
         self._refresh_status_counts()
         self._refresh_progress()
+        self._update_branch_button()
 
     def _render_sidebar(self):
         area = self.side_text
@@ -3073,6 +3057,18 @@ class ChatViewerApp:
         exported = parse_exported_at(self.chat_data.get("exported_at"))
         self.info_time.configure(text=("导出 " + exported) if exported else "")
         self._set_infobar_visible(True)
+
+    def _update_branch_button(self):
+        """悬浮分支按钮：仅当当前文件存在分支且不在文件夹模式时显示。"""
+        forks = sum(1 for m in self.messages if "_fork" in m)
+        show = bool(forks and self.chat_data and not self._folder_mode)
+        if show:
+            self.btn_branch.configure(text="分支 %d" % forks)
+            if not self.btn_branch.winfo_ismapped():
+                self.btn_branch.place(in_=self.stage, relx=1.0, rely=1.0,
+                                      x=-S(46), y=-S(12), anchor="se")
+        else:
+            self.btn_branch.place_forget()
 
     def _update_saved_chip(self):
         count = len(self.edited)
@@ -4015,48 +4011,6 @@ class ChatViewerApp:
             pass
 
     # ══════════════════════════ 对话分支：切换 / 树状图 ══════════════════════════
-    def switch_branch(self, idx, delta):
-        """在有分支的消息处切换到上 / 下一个分支（swipe 式查看）。"""
-        if not self.chat_data or idx is None or idx >= len(self.messages):
-            return
-        fork = self.messages[idx].get("_fork")
-        if not fork:
-            return
-        options = fork["options"]
-        try:
-            pos = options.index(fork["current"])
-        except ValueError:
-            pos = 0
-        new_pos = pos + delta
-        if not 0 <= new_pos < len(options):
-            self._set_status("已经是%s一个分支（共 %d 个分支）"
-                             % ("第一" if delta < 0 else "最后", len(options)))
-            return
-        self._apply_branch(idx, new_pos)
-
-    def _apply_branch(self, idx, new_pos):
-        """跳转到分支节点的第 new_pos 个分支并重渲染（所有切换的统一入口）。"""
-        if not self.chat_data or idx is None or idx >= len(self.messages):
-            return
-        if self.edited:
-            self._set_status("有未保存的修改，切换分支前请先保存（Ctrl+S）")
-            return
-        fork = self.messages[idx].get("_fork")
-        if not fork:
-            return
-        options = fork["options"]
-        if not 0 <= new_pos < len(options):
-            return
-        self.branch_overrides[fork["chunk_id"]] = options[new_pos]
-        self.chat_data = extract_messages(self.chat_data["raw"], self.branch_overrides)
-        self.messages = self.chat_data["messages"]
-        self.refresh_display()
-        self._scroll_to_message(idx)
-        self._flash_block(idx)
-        self._refresh_status_counts()
-        self._set_status("已切换到第 %d/%d 分支 · 共 %d 条消息"
-                         % (new_pos + 1, len(options), len(self.messages)))
-
     # ══════════════════════════ 搜索 / 筛选 ══════════════════════════
     def _search_term(self):
         try:

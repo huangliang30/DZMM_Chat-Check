@@ -4205,6 +4205,8 @@ class BranchTreeViewer(tk.Toplevel):
         self._anim_job = None
         self._drag = None
         self._card_rects = []
+        self._canvas_w = S(860)
+        self._canvas_h = S(560)
 
         data = app._branch_tree_data()
         if not data:
@@ -4298,7 +4300,10 @@ class BranchTreeViewer(tk.Toplevel):
         return deepest
 
     def _display_children(self, cid):
-        """折叠：被折叠节点视为叶子（子树隐藏，卡片显示折叠条数）。"""
+        """显示树的孩子关系（布局 / 连线 / 折叠共用）：
+
+        每个 chunk 节点都是一张卡片（与参考图一致，短连线相连）；
+        被折叠节点视为叶子（子树隐藏，卡片显示折叠条数）。"""
         if cid in self._folded:
             return []
         return self.nodes[cid]["children"]
@@ -4416,6 +4421,11 @@ class BranchTreeViewer(tk.Toplevel):
         self.canvas.bind("<ButtonPress-1>", self._on_press, add="+")
         self.canvas.bind("<B1-Motion>", self._on_motion, add="+")
         self.canvas.bind("<ButtonRelease-1>", self._on_release, add="+")
+        self.canvas.bind("<Configure>",
+                         lambda e: setattr(self, "_canvas_w", e.width)
+                         or setattr(self, "_canvas_h", e.height), add="+")
+        self._canvas_w = S(860)
+        self._canvas_h = S(560)
         for seq, fn in (("<Left>", lambda: self._nav(-2)),
                         ("<Right>", lambda: self._nav(2)),
                         ("<Up>", lambda: self._nav(-1)),
@@ -4572,13 +4582,15 @@ class BranchTreeViewer(tk.Toplevel):
                                        smooth=True, width=S(1),
                                        fill=self._edge_color(cid, kid))
 
+        # 视口裁剪仅对超大树启用；普通大小全量绘制，
+        # 避免 _center / 平移后新暴露区域没有卡片
         cw_win, ch_win = self._canvas_size()
-        if canvas.winfo_width() <= 2:
-            x0, y0, x1, y1 = -1e9, -1e9, 1e9, 1e9
-        else:
+        if len(self._positions) > 800 and canvas.winfo_width() > 2:
             x0, y0 = canvas.canvasx(0), canvas.canvasy(0)
             x1 = x0 + cw_win
             y1 = y0 + ch_win
+        else:
+            x0, y0, x1, y1 = -1e9, -1e9, 1e9, 1e9
         pad = S(140)
         font_summary = self.fonts.small if z >= 0.55 else (self.fonts.family, 7)
         font_role = self.fonts.tiny if z >= 0.4 else (self.fonts.family, 6)
@@ -4715,12 +4727,8 @@ class BranchTreeViewer(tk.Toplevel):
         self._center(cid)
 
     def _canvas_size(self):
-        w = self.canvas.winfo_width()
-        h = self.canvas.winfo_height()
-        if w <= 2 or h <= 2:
-            w = max(1, self._win_w - S(262) - S(30))
-            h = max(1, self._win_h - S(30) - S(30))
-        return w, h
+        # 画布实际尺寸由 <Configure> 事件维护；映射前用窗口配置推算兜底
+        return (max(1, self._canvas_w), max(1, self._canvas_h))
 
     def _center(self, cid):
         if cid not in self._positions:

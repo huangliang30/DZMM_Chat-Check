@@ -2104,6 +2104,12 @@ class ChatViewerApp:
                                       command=self.toggle_replace)
         self.btn_replace.pack(side="left", padx=(S(3), S(1)), pady=S(9))
 
+        self.btn_branch = FlatButton(bar, self.theme, icon="branch", variant="ghost",
+                                     tooltip="对话分支树 · 查看与切换分支",
+                                     command=lambda: self._show_branch_tree(
+                                         None, self.btn_branch))
+        self.btn_branch.pack(side="left", padx=(S(3), S(1)), pady=S(9))
+
         # 右侧工具（先 pack 的在最右）
         self.btn_collapse = FlatButton(bar, self.theme, icon="chevron_up",
                                        variant="ghost", tooltip="收起操作栏（Ctrl+T）",
@@ -2232,12 +2238,6 @@ class ChatViewerApp:
         self.edit_panel.pack_propagate(False)
         self.edit_line = TFrame(self.body, self.theme, bg_key="border", width=1)
         self._build_edit_panel()
-        # 悬浮分支按钮：加载含分支的文件时浮于正文右下角，点击弹出分支树状图
-        self.btn_branch = FlatButton(self.stage, self.theme, text="", variant="soft",
-                                     font=self.fonts.small, padx=S(14), pady=S(6),
-                                     tooltip="对话分支树 · 查看与切换分支",
-                                     command=lambda: self._show_branch_tree(
-                                         None, self.btn_branch))
 
     def _build_transcript(self):
         frame = TFrame(self.stage, self.theme, bg_key="bg")
@@ -3067,14 +3067,11 @@ class ChatViewerApp:
     def _update_branch_button(self):
         """悬浮分支按钮：仅当当前文件存在分支且不在文件夹模式时显示。"""
         forks = sum(1 for m in self.messages if "_fork" in m)
-        show = bool(forks and self.chat_data and not self._folder_mode)
-        if show:
-            self.btn_branch.configure(text="分支 %d" % forks)
+        if forks and self.chat_data and not self._folder_mode:
             if not self.btn_branch.winfo_ismapped():
-                self.btn_branch.place(in_=self.stage, relx=1.0, rely=1.0,
-                                      x=-S(46), y=-S(12), anchor="se")
+                self.btn_branch.pack(side="left", padx=(S(3), S(1)), pady=S(9))
         else:
-            self.btn_branch.place_forget()
+            self.btn_branch.pack_forget()
 
     def _update_saved_chip(self):
         count = len(self.edited)
@@ -4205,6 +4202,8 @@ class BranchTreeViewer(tk.Toplevel):
         self._anim_job = None
         self._drag = None
         self._card_rects = []
+        self._hover_job = None
+        self._hover_tip = None
         self._canvas_w = S(860)
         self._canvas_h = S(560)
 
@@ -4560,19 +4559,20 @@ class BranchTreeViewer(tk.Toplevel):
                 continue
             px, py = self._positions[cid]
             if vertical:
-                pax, pay = px + W * z / 2.0, py + H * z
+                pax, pay = (px + W / 2.0) * z, (py + H) * z
             else:
-                pax, pay = px + W * z, py + H * z / 2.0
+                pax, pay = (px + W) * z, (py + H / 2.0) * z
             for kid in self._display_children(cid):
                 if kid not in self._positions:
                     continue
                 kx, ky = self._positions[kid]
                 if vertical:
-                    kax, kay = kx + W * z / 2.0, ky
+                    kax, kay = (kx + W / 2.0) * z, ky * z
                 else:
-                    kax, kay = kx, ky + H * z / 2.0
-                mx = pax + (kax - pax) / 2.0
-                my = pay + (kay - pay) / 2.0
+                    kax, kay = kx * z, (ky + H / 2.0) * z
+                # 控制点偏移随节点间距自适应（不小于 24px，不吞掉弧线）
+                mx = pax + max(24.0 * z, (kax - pax) / 2.0)
+                my = pay + max(24.0 * z, (kay - pay) / 2.0)
                 if vertical:
                     canvas.create_line(pax, pay, pax, my, kax, my, kax, kay,
                                        smooth=True, width=S(1),
@@ -4647,15 +4647,25 @@ class BranchTreeViewer(tk.Toplevel):
             self._card_rects.append((bx, by, bx + cw, by + ch, cid))
             canvas.tag_bind(tag, "<Button-1>",
                             lambda e, nid=cid: self._on_node_click(e, nid))
+            canvas.tag_bind(tag, "<Double-Button-1>",
+                            lambda _e, nid=cid: self._center(nid))
             canvas.tag_bind(tag, "<Enter>",
-                            lambda _e, nid=cid: self._hover_card(nid, True))
+                            lambda e, nid=cid: self._hover_card(e, nid, True))
             canvas.tag_bind(tag, "<Leave>",
-                            lambda _e, nid=cid: self._hover_card(nid, False))
+                            lambda _e, nid=cid: self._hover_card(None, nid, False))
 
         self._update_zoom_label()
         self._update_minimap()
 
-    def _hover_card(self, cid, on):
+    def _hover_card(self, event, cid, on):
+        """节点悬停：描边微深（Muted Whisper）+ 450ms 后浮现信息预览卡。"""
+        if self._hover_job:
+            try:
+                self.after_cancel(self._hover_job)
+            except Exception:
+                pass
+            self._hover_job = None
+        self._hide_hover_preview()
         if cid == self._selected:
             return
         canvas = self.canvas
@@ -4669,6 +4679,66 @@ class BranchTreeViewer(tk.Toplevel):
             if (canvas.type(item) == "text"
                     and canvas.itemcget(item, "fill") != self.pal["ai_text"]):
                 canvas.itemconfigure(item, fill=color)
+        if on and event is not None:
+            self._hover_job = self.after(
+                450, lambda: self._show_hover_preview(cid, event.x_root,
+                                                      event.y_root))
+
+    def _hide_hover_preview(self):
+        if self._hover_tip is not None:
+            try:
+                self._hover_tip.destroy()
+            except Exception:
+                pass
+            self._hover_tip = None
+
+    def _show_hover_preview(self, cid, x_root, y_root):
+        if not self.nodes.get(cid) or self._hover_tip is not None:
+            return
+        node = self.nodes[cid]
+        pal = self.pal
+        tip = tk.Toplevel(self)
+        tip.wm_overrideredirect(True)
+        try:
+            tip.attributes("-topmost", True)
+        except Exception:
+            pass
+        tip.configure(bg=pal["border_strong"])
+        inner = tk.Frame(tip, bg=pal["surface"], padx=S(10), pady=S(8))
+        inner.pack(fill="both", expand=True)
+        role = node["role"] or "branch"
+        meta = ({"cn": "tool", "color": "tool"} if role == "tool"
+                else role_meta(role))
+        rcolor = pal.get(self.ROLE_KEY.get(role, "other"), pal["other"])
+        tk.Label(inner, text="%s · %d 条" % (meta["cn"], node["own_count"]),
+                 bg=pal["surface"], fg=rcolor, font=self.fonts.small_bold,
+                 bd=0).pack(anchor="w")
+        for m in node["messages"][:2]:
+            body = ellipsis((m.get("content") or "").strip() or "（空）", 120)
+            tk.Label(inner, text=body, bg=pal["surface"], fg=pal["text"],
+                     font=self.fonts.small, bd=0, wraplength=S(240),
+                     justify="left").pack(anchor="w", pady=(S(3), 0))
+        kids = len(node["children"])
+        if kids:
+            tk.Label(inner, text="子节点 %d 个%s" % (kids, "（含嵌套分支）"
+                     if kids >= 2 else ""), bg=pal["surface"], fg=pal["text_3"],
+                     font=self.fonts.tiny, bd=0).pack(anchor="w", pady=(S(4), 0))
+        self._hover_tip = tip
+
+        def place():
+            if self._hover_tip is not tip:
+                return
+            try:
+                tip.update_idletasks()
+                w, h = tip.winfo_reqwidth(), tip.winfo_reqheight()
+                x = max(S(4), min(x_root + S(14),
+                                  self.winfo_screenwidth() - w - S(4)))
+                y = max(S(4), min(y_root + S(14),
+                                  self.winfo_screenheight() - h - S(4)))
+                tip.wm_geometry("+%d+%d" % (x, y))
+            except Exception:
+                pass
+        place()
 
     # ── 交互 ──
     def _node_at(self, cx, cy):
@@ -5054,6 +5124,13 @@ class BranchTreeViewer(tk.Toplevel):
         self._show_detail(self._selected)
 
     def close(self):
+        self._hide_hover_preview()
+        if self._hover_job:
+            try:
+                self.after_cancel(self._hover_job)
+            except Exception:
+                pass
+            self._hover_job = None
         self.app._tree_viewer = None
         try:
             self.theme.unsubscribe(self._on_theme)
